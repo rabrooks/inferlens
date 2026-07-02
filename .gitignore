@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Trace files — never commit recordings
+*.ilens
+*.ilens.gz
+*.isjsonl
+*.isjsonl.gz
+
+# Viewer (Phase 2)
+node_modules/
+
+# Personal planning artifacts — never part of the public repo
+PLAN.md
+CLAUDE.local.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

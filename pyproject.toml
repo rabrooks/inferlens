@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inferlens"
+version = "0.1.0.dev0"
+authors = [{ name = "InferLens Team" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+readme = "README.md"
+description = "Engine-neutral observability for LLM inference: record scheduler, batching, and KV-cache behavior and explore it as an interactive timeline."
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Monitoring",
+]
+requires-python = ">=3.10,<3.15"
+# Core stays dependency-free: the schema, writer, and CLI must be importable
+# anywhere a trace file needs to be produced or inspected.
+dependencies = []
+
+[project.optional-dependencies]
+# Collector extras pull in only what that engine's transport needs.
+vllm = [
+    "pyzmq>=25.0",
+    "msgspec>=0.18",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "ruff==0.14.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rabrooks/inferlens"
+
+[project.scripts]
+inferlens = "inferlens.cli:main"
+
+# vLLM discovers stat-logger plugins through this entry-point group and calls
+# them every logging step. The InferLens logger is a no-op unless
+# INFERLENS_TRACE_PATH is set, so merely having inferlens installed never
+# changes vLLM's behavior.
+[project.entry-points."vllm.stat_logger_plugins"]
+inferlens = "inferlens.collectors.vllm:InferLensStatLogger"
+
+[tool.ruff.lint]
+# Rule selection mirrors vllm-project/vllm.
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-implicit-str-concat
+    "ISC",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # flake8-logging-format
+    "G",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

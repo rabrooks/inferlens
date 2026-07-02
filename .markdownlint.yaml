@@ -1,0 +1,3 @@
+# MD013/MD033 relaxed: prose wraps naturally; tables and badges need HTML/long lines.
+MD013: false
+MD033: false

@@ -1,0 +1,29 @@
+# Hook selection mirrors vllm-project/vllm (minus C++/CUDA hooks we don't need yet).
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+default_stages:
+  - pre-commit # Run locally
+  - manual # Run in CI
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.14.0
+  hooks:
+  - id: ruff-check
+    args: [--output-format, github, --fix]
+  - id: ruff-format
+- repo: https://github.com/crate-ci/typos
+  rev: v1.43.5
+  hooks:
+  - id: typos
+    args: [--force-exclude]
+- repo: https://github.com/DavidAnson/markdownlint-cli2
+  rev: v0.21.0
+  hooks:
+  - id: markdownlint-cli2
+    args: [--fix]
+    exclude: ^CLAUDE\.md$
+- repo: https://github.com/rhysd/actionlint
+  rev: v1.7.7
+  hooks:
+  - id: actionlint
