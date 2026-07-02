@@ -53,7 +53,7 @@ inferlens = "inferlens.cli:main"
 # INFERLENS_TRACE_PATH is set, so merely having inferlens installed never
 # changes vLLM's behavior.
 [project.entry-points."vllm.stat_logger_plugins"]
-inferlens = "inferlens.collectors.vllm:InferLensStatLogger"
+inferlens = "inferlens.collectors.vllm.stat_logger:InferLensStatLogger"
 
 [tool.ruff.lint]
 # Rule selection mirrors vllm-project/vllm.
