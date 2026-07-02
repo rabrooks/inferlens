@@ -12,7 +12,7 @@ from inferlens.schema import (
     from_record,
     to_record,
 )
-from inferlens.trace_io import TraceWriter, read_trace
+from inferlens.trace_io import BufferedTraceWriter, TraceWriter, read_trace
 
 META = TraceMeta(
     engine="vllm",
@@ -84,3 +84,26 @@ def test_gzip_output_is_actually_gzip(tmp_path):
         writer.write(META)
     with gzip.open(path, "rt", encoding="utf-8") as f:
         assert '"kind":"trace_meta"' in f.read()
+
+
+def test_buffered_trace_writer_roundtrip(tmp_path):
+    path = tmp_path / "trace.ilens"
+    with BufferedTraceWriter(path) as writer:
+        for event in (META, SNAPSHOT, FINISHED):
+            writer.write(event)
+
+    assert list(read_trace(path)) == [META, SNAPSHOT, FINISHED]
+
+
+def test_buffered_trace_writer_drops_past_maxsize(tmp_path):
+    path = tmp_path / "trace.ilens"
+    writer = BufferedTraceWriter(path, maxsize=1)
+    # The writer thread may drain the queue between put_nowait calls, so
+    # flood it enough to guarantee at least one drop regardless of timing.
+    for _ in range(1000):
+        writer.write(SNAPSHOT)
+    writer.close()
+
+    assert writer.dropped > 0
+    events = list(read_trace(path))
+    assert 0 < len(events) < 1000

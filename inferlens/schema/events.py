@@ -64,10 +64,72 @@ class RequestFinished:
     num_cached_tokens: int = 0
 
 
-TraceEvent = TraceMeta | EngineSnapshot | RequestFinished
+@dataclass(slots=True)
+class KVBlockStored:
+    """A KV cache block chain was stored (vLLM ``BlockStored``).
+
+    Token content is deliberately not recorded — only ``num_tokens`` — so a
+    trace never carries prompt text. ``block_hashes`` alone already raise a
+    fingerprinting concern; see the open question in ``TRACE_SPEC.md``.
+    """
+
+    KIND: ClassVar[str] = "kv_block_stored"
+
+    ts: float
+    seq: int
+    wall_time_unix: float
+    block_hashes: list[int | str]
+    parent_block_hash: int | str | None
+    num_tokens: int
+    block_size: int
+    medium: str | None = None
+    group_idx: int = 0
+
+
+@dataclass(slots=True)
+class KVBlockRemoved:
+    """A KV cache block was evicted (vLLM ``BlockRemoved``)."""
+
+    KIND: ClassVar[str] = "kv_block_removed"
+
+    ts: float
+    seq: int
+    wall_time_unix: float
+    block_hashes: list[int | str]
+    medium: str | None = None
+    group_idx: int = 0
+
+
+@dataclass(slots=True)
+class KVCacheCleared:
+    """The whole prefix cache was reset (vLLM ``AllBlocksCleared``)."""
+
+    KIND: ClassVar[str] = "kv_cache_cleared"
+
+    ts: float
+    seq: int
+    wall_time_unix: float
+
+
+TraceEvent = (
+    TraceMeta
+    | EngineSnapshot
+    | RequestFinished
+    | KVBlockStored
+    | KVBlockRemoved
+    | KVCacheCleared
+)
 
 EVENT_TYPES: dict[str, type] = {
-    cls.KIND: cls for cls in (TraceMeta, EngineSnapshot, RequestFinished)
+    cls.KIND: cls
+    for cls in (
+        TraceMeta,
+        EngineSnapshot,
+        RequestFinished,
+        KVBlockStored,
+        KVBlockRemoved,
+        KVCacheCleared,
+    )
 }
 
 

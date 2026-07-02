@@ -40,6 +40,15 @@ instant, anchoring monotonic time to wall time. Merged event sources (e.g.
 the stat logger and the KV-event subscriber) must share the anchor or record
 their own `trace_meta`.
 
+vLLM's KV events don't carry a monotonic timestamp at all — only one
+wall-clock `time.time()` per batch, stamped when the scheduler assembled
+the batch (not when it was published or received). The KV-event subscriber
+therefore uses its own receive-time monotonic clock for `ts`, keeping the
+cross-source invariant that every `ts` is directly comparable, and
+preserves vLLM's `time.time()` as `wall_time_unix` for reference. Order
+`kv_*` events by `seq` (the ZMQ transport sequence number), not `ts` —
+see the `kv_*` row group above.
+
 ## Event kinds
 
 ### Implemented (schema v0.1)
@@ -49,14 +58,25 @@ their own `trace_meta`.
 | `trace_meta` | engine/model identity + clock anchor | recorder startup |
 | `engine_snapshot` | per logging step: queue depths, KV usage, prefix-cache stats, preemption count, token throughput | vLLM `SchedulerStats` + `IterationStats` |
 | `request_finished` | per-request lifecycle summary: queued/prefill/decode times, token counts, cached tokens, finish reason | vLLM `FinishedRequestStats` |
+| `kv_block_stored` | a KV block chain was stored: block hashes, token count (not token content), block size, cache medium/group | vLLM KV events (ZMQ, `--kv-events-config`), `BlockStored` |
+| `kv_block_removed` | a KV block was evicted: block hashes, cache medium/group | vLLM KV events (ZMQ), `BlockRemoved` |
+| `kv_cache_cleared` | the whole prefix cache was reset | vLLM KV events (ZMQ), `AllBlocksCleared` |
 
 Field lists are normative in `inferlens/schema/events.py` (dataclasses).
+
+`kv_*` events carry three time references instead of one, because their
+source batch has no monotonic timestamp (see Clock model below): `ts` is
+this collector's own monotonic receive time (comparable to every other
+event's `ts`), `wall_time_unix` is vLLM's wall-clock batch-assembly
+timestamp (excludes ZMQ queue latency, useful for cross-checking against
+`trace_meta`'s anchor), and `seq` is the ZMQ transport sequence number —
+the only field that gives exact ordering, since one wall-clock `ts` can
+cover a batch of several events.
 
 ### Planned
 
 | kind | one line | source |
 | --- | --- | --- |
-| `kv_block_stored` / `kv_block_removed` / `kv_cache_cleared` | KV block lifecycle with block hashes | vLLM KV events (ZMQ, `--kv-events-config`) |
 | `kv_eviction` | eviction bursts with cause | `SchedulerStats.kv_cache_eviction_events` |
 | `request_queued` | request arrival (enables live queue Gantt, not just post-hoc) | API-server middleware or upstream hook |
 
@@ -82,3 +102,10 @@ banner).
   salted per trace? Leaning salted-per-trace by default.
 - Multi-engine / data-parallel traces: one file per engine index vs. an
   `engine_index` field on every event. Leaning per-event field.
+- How the KV-event subscriber and the in-process stat logger end up in one
+  trace file: they run in different OS processes (the stat logger inside
+  the vLLM frontend, the subscriber wherever `inferlens record` runs), so
+  they can't safely share one open file handle. Resolve when the `inferlens
+  record` wrapper is built — likely either the wrapper owns the only
+  `TraceWriter` and both sources feed it over an in-process queue, or each
+  source writes its own file and reader-side merges by `ts`.

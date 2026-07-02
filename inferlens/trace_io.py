@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
+import queue
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Literal
 
 from inferlens.schema import TraceEvent, from_record, to_record
+
+_logger = logging.getLogger(__name__)
 
 
 def _open(path: Path, mode: Literal["r", "w"]) -> IO[str]:
@@ -44,6 +49,63 @@ class TraceWriter:
         self._file.close()
 
     def __enter__(self) -> TraceWriter:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+
+class BufferedTraceWriter:
+    """Trace writer safe to call from a latency-sensitive event loop.
+
+    ``write()`` only enqueues; a background thread performs the actual
+    (blocking, possibly gzip-compressing) file I/O. If that thread falls
+    behind — a stalled disk, for instance — events are dropped rather than
+    blocking the caller, since callers of this class (e.g. the vLLM
+    stat-logger plugin) must never stall their engine's event loop. See
+    ``dropped`` for the count.
+    """
+
+    def __init__(self, path: str | Path, maxsize: int = 10_000) -> None:
+        self._writer = TraceWriter(path)
+        self._queue: queue.Queue[TraceEvent | None] = queue.Queue(maxsize=maxsize)
+        self.dropped = 0
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def write(self, event: TraceEvent) -> None:
+        """Enqueue an event for the writer thread; never blocks."""
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            self.dropped += 1
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            try:
+                self._writer.write(item)
+            except Exception:
+                _logger.exception("dropping trace event that failed to write")
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Drain the queue and close the underlying file.
+
+        Safe to call more than once (e.g. an explicit call racing an
+        ``atexit`` hook): closing an already-closed writer is a no-op.
+        """
+        self._queue.put(None)
+        self._thread.join(timeout=timeout)
+        self._writer.close()
+
+    def __enter__(self) -> BufferedTraceWriter:
         return self
 
     def __exit__(

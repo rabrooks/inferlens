@@ -355,6 +355,23 @@ PUB drops silently past HWM or with no subscriber; no heartbeat — idle and
 dead are indistinguishable. Subscriber contract: track `seq`, replay on
 gaps, dedup across replay+live, record receive time.
 
+**Replay-client bug (found implementing our subscriber, not yet reported
+upstream):** vLLM's ROUTER-side `_service_replay` (`kv_events.py:493`)
+sends one `send_multipart` per buffered batch plus an end marker — multiple
+independent replies to one request. But vLLM's own reference client
+(`examples/features/kv_events/kv_events_subscriber.py`) and its test
+double (`tests/distributed/conftest.py::MockSubscriber.receive_replay`)
+both request replay over a `zmq.REQ` socket and loop `recv_multipart()` on
+it. A `REQ` socket's send/recv FSM allows exactly one `recv()` per
+`send()`; verified empirically that a second `recv()` (or
+`poller.poll()`-gated `recv()`) after one `send()` raises `EFSM`
+("Operation cannot be accomplished in current state") — so both only ever
+retrieve the *first* replayed batch, silently missing the rest on any
+gap wider than one. Our subscriber uses `DEALER` for the replay socket
+instead (no such FSM restriction), manually prepending the empty
+delimiter frame `REQ` would otherwise add automatically — verified
+wire-compatible with the real `ROUTER`-side framing.
+
 **Config:** `--kv-events-config '{"enable_kv_cache_events": true, ...}'`
 (`config/kv_events.py:10`; fields: `endpoint`, `replay_endpoint`,
 `buffer_steps`, `hwm`, `topic`). Prefix caching should be enabled or
