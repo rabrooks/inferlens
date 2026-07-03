@@ -9,7 +9,12 @@ pytest.importorskip("zmq")
 msgspec = pytest.importorskip("msgspec")
 
 from inferlens.collectors.vllm import kv_events  # noqa: E402
-from inferlens.schema import KVBlockRemoved, KVBlockStored, KVCacheCleared  # noqa: E402
+from inferlens.schema import (  # noqa: E402
+    CollectorGap,
+    KVBlockRemoved,
+    KVBlockStored,
+    KVCacheCleared,
+)
 
 # --- translation (pure, no sockets) -----------------------------------------
 
@@ -345,3 +350,62 @@ def test_subscriber_recovers_repeated_gaps(zmq_context):
         router.close(linger=0)
 
     assert sorted(received_seqs()) == [0, 1, 2, 3, 4, 5]
+
+
+def test_subscriber_annotates_gap_when_replay_disabled(zmq_context):
+    """Without a replay endpoint, missed batches must surface in the trace
+    as a collector_gap event — holes are allowed, silent holes are not."""
+    import zmq
+
+    pub = zmq_context.socket(zmq.PUB)
+    port = pub.bind_to_random_port("tcp://127.0.0.1")
+    sink = _FakeSink()
+    subscriber = kv_events.KVEventSubscriber(f"tcp://127.0.0.1:{port}", sink)
+    subscriber.start()
+    try:
+        payload = _encode_batch([kv_events.AllBlocksCleared()])
+
+        def publish_seq0_until_received():
+            pub.send_multipart((b"", (0).to_bytes(8, "big"), payload))
+            return len(sink.snapshot()) > 0
+
+        assert _wait_until(publish_seq0_until_received)
+
+        # Batches 1 and 2 are never published to us: an unrecoverable gap.
+        pub.send_multipart((b"", (3).to_bytes(8, "big"), payload))
+        assert _wait_until(
+            lambda: any(isinstance(e, CollectorGap) for e in sink.snapshot())
+        )
+    finally:
+        subscriber.stop()
+        pub.close(linger=0)
+
+    [gap] = [e for e in sink.snapshot() if isinstance(e, CollectorGap)]
+    assert gap.source == kv_events.GAP_SOURCE
+    assert gap.reason == "replay_disabled"
+    assert (gap.first_seq, gap.last_seq) == (1, 2)
+
+
+def test_subscriber_survives_malformed_message(zmq_context):
+    """A message with the wrong frame count must not kill the thread."""
+    import zmq
+
+    pub = zmq_context.socket(zmq.PUB)
+    port = pub.bind_to_random_port("tcp://127.0.0.1")
+    sink = _FakeSink()
+    subscriber = kv_events.KVEventSubscriber(f"tcp://127.0.0.1:{port}", sink)
+    subscriber.start()
+    try:
+        payload = _encode_batch([kv_events.AllBlocksCleared()])
+
+        def publish_garbage_then_valid():
+            pub.send_multipart((b"", b"only-two-frames"))
+            pub.send_multipart((b"", (0).to_bytes(8, "big"), payload))
+            return len(sink.snapshot()) > 0
+
+        assert _wait_until(publish_garbage_then_valid)
+    finally:
+        subscriber.stop()
+        pub.close(linger=0)
+
+    assert any(isinstance(e, KVCacheCleared) for e in sink.snapshot())

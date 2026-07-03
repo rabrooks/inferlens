@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, ClassVar
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
 
 
 @dataclass(slots=True)
@@ -111,6 +111,29 @@ class KVCacheCleared:
     wall_time_unix: float
 
 
+@dataclass(slots=True)
+class CollectorGap:
+    """Events the collector knows it lost.
+
+    A trace with holes is acceptable; a trace with *silent* holes is not.
+    Collectors emit this instead of dropping data quietly — e.g. the KV-event
+    subscriber saw a sequence-number jump it could not recover via replay —
+    so a viewer can render "data missing here" rather than implying nothing
+    happened. ``source`` names the collector stream (e.g.
+    ``"vllm_kv_events"``), ``reason`` is a short machine-readable cause, and
+    ``first_seq``/``last_seq`` bound the missed range (inclusive) when the
+    stream is sequence-numbered.
+    """
+
+    KIND: ClassVar[str] = "collector_gap"
+
+    ts: float
+    source: str
+    reason: str
+    first_seq: int | None = None
+    last_seq: int | None = None
+
+
 TraceEvent = (
     TraceMeta
     | EngineSnapshot
@@ -118,6 +141,7 @@ TraceEvent = (
     | KVBlockStored
     | KVBlockRemoved
     | KVCacheCleared
+    | CollectorGap
 )
 
 EVENT_TYPES: dict[str, type] = {
@@ -129,6 +153,7 @@ EVENT_TYPES: dict[str, type] = {
         KVBlockStored,
         KVBlockRemoved,
         KVCacheCleared,
+        CollectorGap,
     )
 }
 

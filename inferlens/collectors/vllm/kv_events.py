@@ -28,9 +28,18 @@ from typing import Any, Protocol
 import msgspec
 import zmq
 
-from inferlens.schema import KVBlockRemoved, KVBlockStored, KVCacheCleared, TraceEvent
+from inferlens.schema import (
+    CollectorGap,
+    KVBlockRemoved,
+    KVBlockStored,
+    KVCacheCleared,
+    TraceEvent,
+)
 
 _logger = logging.getLogger(__name__)
+
+# `source` value on the CollectorGap events this collector emits.
+GAP_SOURCE = "vllm_kv_events"
 
 ExternalBlockHash = bytes | int
 
@@ -138,8 +147,13 @@ class KVEventSubscriber:
     Mirrors vLLM's reference subscriber: a SUB socket for the live stream,
     plus an optional DEALER replay socket to recover events missed on a
     sequence-number gap (dropped-on-full PUB, a slow subscriber, a restart).
-    Never raises out of the thread — a single bad payload is logged and
-    skipped rather than killing the subscription.
+
+    Failure policy: gaps are never fatal to the recording. A bad message is
+    logged and skipped, and any events that could not be recovered (replay
+    disabled, or replay timed out short of the gap) are annotated in the
+    trace itself as a :class:`~inferlens.schema.CollectorGap` — a trace with
+    holes is acceptable, a trace with silent holes is not. Only a socket
+    error stops the thread, with an error log.
     """
 
     def __init__(
@@ -200,23 +214,57 @@ class KVEventSubscriber:
         last_seq = -1
         try:
             while not self._stop.is_set():
-                if not sub.poll(self._poll_timeout_ms):
-                    continue
-                _topic, seq_bytes, payload = sub.recv_multipart()
-                seq = int.from_bytes(seq_bytes, "big", signed=True)
+                try:
+                    if not sub.poll(self._poll_timeout_ms):
+                        continue
+                    frames = sub.recv_multipart()
+                    if len(frames) != 3:
+                        _logger.warning(
+                            "dropping malformed KV event message (%d frames)",
+                            len(frames),
+                        )
+                        continue
+                    _topic, seq_bytes, payload = frames
+                    seq = int.from_bytes(seq_bytes, "big", signed=True)
 
-                if replay is not None and last_seq >= 0 and seq > last_seq + 1:
-                    assert poller is not None
-                    last_seq = self._replay_gap(replay, poller, last_seq, seq)
-                if seq <= last_seq:
-                    continue  # already delivered via replay, or a duplicate
+                    if last_seq >= 0 and seq > last_seq + 1:
+                        if replay is not None:
+                            assert poller is not None
+                            last_seq = self._replay_gap(replay, poller, last_seq, seq)
+                        if seq > last_seq + 1:
+                            self._record_gap(last_seq + 1, seq - 1, replay)
+                    if seq <= last_seq:
+                        continue  # already delivered via replay, or a duplicate
 
-                self._decode_and_emit(payload, seq)
-                last_seq = seq
+                    self._decode_and_emit(payload, seq)
+                    last_seq = seq
+                except zmq.ZMQError:
+                    _logger.exception("KV event socket error; stopping subscriber")
+                    break
+                except Exception:
+                    _logger.exception("error handling KV event message; continuing")
         finally:
             sub.close(linger=0)
             if replay is not None:
                 replay.close(linger=0)
+
+    def _record_gap(
+        self, first_seq: int, last_seq: int, replay: zmq.Socket | None
+    ) -> None:
+        """Annotate unrecoverable missed batches in the trace itself."""
+        reason = "replay_disabled" if replay is None else "replay_incomplete"
+        _logger.warning(
+            "KV event batches seq %d..%d lost (%s)", first_seq, last_seq, reason
+        )
+        self._sink.write(
+            CollectorGap(
+                ts=time.monotonic(),
+                source=GAP_SOURCE,
+                reason=reason,
+                first_seq=first_seq,
+                last_seq=last_seq,
+            )
+        )
 
     def _replay_gap(
         self, replay: zmq.Socket, poller: zmq.Poller, last_seq: int, current_seq: int
@@ -242,10 +290,8 @@ class KVEventSubscriber:
             if replay_seq > last_seq:
                 self._decode_and_emit(payload, replay_seq)
                 last_seq = replay_seq
-        _logger.warning(
-            "KV event replay timed out; events up to seq %d may be lost",
-            current_seq - 1,
-        )
+        # Timed out short of the end marker; the caller records whatever
+        # part of the gap is still missing as a CollectorGap.
         return last_seq
 
     def _decode_and_emit(self, payload: bytes, seq: int) -> None:

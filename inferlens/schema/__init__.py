@@ -6,6 +6,7 @@ See ``docs/TRACE_SPEC.md`` for the normative specification.
 from inferlens.schema.events import (
     EVENT_TYPES,
     SCHEMA_VERSION,
+    CollectorGap,
     EngineSnapshot,
     KVBlockRemoved,
     KVBlockStored,
@@ -20,6 +21,7 @@ from inferlens.schema.events import (
 __all__ = [
     "EVENT_TYPES",
     "SCHEMA_VERSION",
+    "CollectorGap",
     "EngineSnapshot",
     "KVBlockRemoved",
     "KVBlockStored",

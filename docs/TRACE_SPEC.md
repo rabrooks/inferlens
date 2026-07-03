@@ -1,4 +1,4 @@
-# InferLens Trace Format — v0.1 (DRAFT)
+# InferLens Trace Format — v0.2 (DRAFT)
 
 > **Status: draft.** Until v1.0, the format may change between releases
 > without migration support. Schema changes MUST update this document and
@@ -53,7 +53,7 @@ see the `kv_*` row group above.
 
 ## Event kinds
 
-### Implemented (schema v0.1)
+### Implemented (schema v0.2)
 
 | kind | one line | emitted by |
 | --- | --- | --- |
@@ -63,6 +63,7 @@ see the `kv_*` row group above.
 | `kv_block_stored` | a KV block chain was stored: block hashes, token count (not token content), block size, cache medium/group | vLLM KV events (ZMQ, `--kv-events-config`), `BlockStored` |
 | `kv_block_removed` | a KV block was evicted: block hashes, cache medium/group | vLLM KV events (ZMQ), `BlockRemoved` |
 | `kv_cache_cleared` | the whole prefix cache was reset | vLLM KV events (ZMQ), `AllBlocksCleared` |
+| `collector_gap` | events the collector knows it lost (source stream, cause, seq range) — a trace may have holes, never silent ones | any collector; new in v0.2 |
 
 Field lists are normative in `inferlens/schema/events.py` (dataclasses).
 
