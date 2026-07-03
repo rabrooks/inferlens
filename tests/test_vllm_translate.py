@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from inferlens.collectors.vllm import translate
 
 
@@ -36,6 +38,8 @@ def _iteration_stats(**overrides):
         num_generation_tokens=16,
         num_prompt_tokens=32,
         finished_requests=[],
+        time_to_first_tokens_iter=[],
+        inter_token_latencies_iter=[],
     )
     return SimpleNamespace(**{**defaults, **overrides})
 
@@ -62,6 +66,36 @@ def test_engine_snapshot_defaults_iteration_fields_when_none():
     assert snapshot.num_preempted_reqs == 0
     assert snapshot.num_generation_tokens == 0
     assert snapshot.num_prompt_tokens == 0
+    assert snapshot.ttft_count == 0
+    assert snapshot.ttft_mean_s is None
+    assert snapshot.itl_count == 0
+    assert snapshot.itl_mean_s is None
+
+
+def test_engine_snapshot_latency_summaries():
+    stats = _iteration_stats(
+        time_to_first_tokens_iter=[0.2, 0.4, 0.9],
+        inter_token_latencies_iter=[0.01, 0.03],
+    )
+    snapshot = translate.engine_snapshot(_scheduler_stats(), stats, ts=1.0)
+    assert snapshot.ttft_count == 3
+    assert snapshot.ttft_mean_s == pytest.approx(0.5)
+    assert snapshot.ttft_p50_s == pytest.approx(0.4)
+    assert snapshot.ttft_max_s == pytest.approx(0.9)
+    assert snapshot.itl_count == 2
+    assert snapshot.itl_mean_s == pytest.approx(0.02)
+    assert snapshot.itl_p50_s == pytest.approx(0.02)
+    assert snapshot.itl_max_s == pytest.approx(0.03)
+
+
+def test_engine_snapshot_latency_summaries_none_when_empty():
+    snapshot = translate.engine_snapshot(_scheduler_stats(), _iteration_stats(), ts=1.0)
+    assert snapshot.ttft_count == 0
+    assert snapshot.ttft_mean_s is None
+    assert snapshot.ttft_p50_s is None
+    assert snapshot.ttft_max_s is None
+    assert snapshot.itl_count == 0
+    assert snapshot.itl_mean_s is None
 
 
 def test_engine_snapshot_defaults_prefix_stats_when_absent():

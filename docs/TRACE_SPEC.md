@@ -1,4 +1,4 @@
-# InferLens Trace Format — v0.2 (DRAFT)
+# InferLens Trace Format — v0.3 (DRAFT)
 
 > **Status: draft.** Until v1.0, the format may change between releases
 > without migration support. Schema changes MUST update this document and
@@ -86,12 +86,12 @@ it can equally happen at record time or lazily on read.
 
 ## Event kinds
 
-### Implemented (schema v0.2)
+### Implemented (schema v0.3)
 
 | kind | one line | emitted by |
 | --- | --- | --- |
 | `trace_meta` | engine/model identity + clock anchor | recorder startup |
-| `engine_snapshot` | per logging step: queue depths, KV usage, prefix-cache stats, preemption count, token throughput | vLLM `SchedulerStats` + `IterationStats` |
+| `engine_snapshot` | per logging step: queue depths, KV usage, prefix-cache stats, preemption count, token throughput, TTFT/ITL summaries (v0.3) | vLLM `SchedulerStats` + `IterationStats` |
 | `request_finished` | per-request lifecycle summary: queued/prefill/decode times, token counts, cached tokens, finish reason | vLLM `FinishedRequestStats` |
 | `kv_block_stored` | a KV block chain was stored: block hashes, token count (not token content), block size, cache medium/group | vLLM KV events (ZMQ, `--kv-events-config`), `BlockStored` |
 | `kv_block_removed` | a KV block was evicted: block hashes, cache medium/group | vLLM KV events (ZMQ), `BlockRemoved` |
@@ -99,6 +99,14 @@ it can equally happen at record time or lazily on read.
 | `collector_gap` | events the collector knows it lost (source stream, cause, seq range) — a trace may have holes, never silent ones | any collector; new in v0.2 |
 
 Field lists are normative in `inferlens/schema/events.py` (dataclasses).
+
+`engine_snapshot`'s `ttft_*`/`itl_*` fields (v0.3) summarize that
+iteration's time-to-first-token and inter-token-latency samples as
+count/mean/p50/max in seconds (`null` = no samples that iteration). They
+are **engine-level distributions, not per-request values** — vLLM's
+source arrays carry no request IDs (`upstream-gaps.md` §1), so a viewer
+may draw latency bands over time from them but must never attribute them
+to individual requests.
 
 ### `finish_reason` vocabulary
 

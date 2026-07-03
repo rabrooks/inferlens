@@ -17,6 +17,7 @@ data. Only genuinely optional or nested stats use ``getattr`` defaults.
 
 from __future__ import annotations
 
+import statistics
 from typing import Any
 
 from inferlens.schema import EngineSnapshot, RequestFinished
@@ -34,6 +35,8 @@ def engine_snapshot(
     if scheduler_stats is None:
         return None
     prefix_stats = getattr(scheduler_stats, "prefix_cache_stats", None)
+    ttft = _latency_summary(getattr(iteration_stats, "time_to_first_tokens_iter", None))
+    itl = _latency_summary(getattr(iteration_stats, "inter_token_latencies_iter", None))
     return EngineSnapshot(
         ts=ts,
         num_running_reqs=scheduler_stats.num_running_reqs,
@@ -44,6 +47,33 @@ def engine_snapshot(
         num_preempted_reqs=getattr(iteration_stats, "num_preempted_reqs", 0),
         num_generation_tokens=getattr(iteration_stats, "num_generation_tokens", 0),
         num_prompt_tokens=getattr(iteration_stats, "num_prompt_tokens", 0),
+        ttft_count=ttft[0],
+        ttft_mean_s=ttft[1],
+        ttft_p50_s=ttft[2],
+        ttft_max_s=ttft[3],
+        itl_count=itl[0],
+        itl_mean_s=itl[1],
+        itl_p50_s=itl[2],
+        itl_max_s=itl[3],
+    )
+
+
+def _latency_summary(
+    samples: list[float] | None,
+) -> tuple[int, float | None, float | None, float | None]:
+    """Summarize one iteration's latency samples as (count, mean, p50, max).
+
+    vLLM's per-iteration TTFT/ITL arrays are unkeyed (no request ID at the
+    source, `docs/upstream-gaps.md` §1), so distribution summaries are the
+    most a trace can record faithfully — never attribute them to requests.
+    """
+    if not samples:
+        return 0, None, None, None
+    return (
+        len(samples),
+        statistics.fmean(samples),
+        statistics.median(samples),
+        max(samples),
     )
 
 

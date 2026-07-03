@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, ClassVar
 
-SCHEMA_VERSION = "0.2"
+SCHEMA_VERSION = "0.3"
 
 
 @dataclass(slots=True)
@@ -31,7 +31,15 @@ class TraceMeta:
 
 @dataclass(slots=True)
 class EngineSnapshot:
-    """Engine-wide state at one logging step (queue depths, cache usage)."""
+    """Engine-wide state at one logging step (queue depths, cache usage).
+
+    The ``ttft_*``/``itl_*`` fields summarize this iteration's
+    time-to-first-token and inter-token-latency samples (seconds). They are
+    engine-level distributions, not per-request values: the samples are
+    unkeyed at the source (no request ID attached — see
+    ``docs/upstream-gaps.md`` §1), so summaries are all that can be
+    recorded faithfully. ``None`` means the iteration had no samples.
+    """
 
     KIND: ClassVar[str] = "engine_snapshot"
 
@@ -44,6 +52,14 @@ class EngineSnapshot:
     num_preempted_reqs: int = 0
     num_generation_tokens: int = 0
     num_prompt_tokens: int = 0
+    ttft_count: int = 0
+    ttft_mean_s: float | None = None
+    ttft_p50_s: float | None = None
+    ttft_max_s: float | None = None
+    itl_count: int = 0
+    itl_mean_s: float | None = None
+    itl_p50_s: float | None = None
+    itl_max_s: float | None = None
 
 
 @dataclass(slots=True)
