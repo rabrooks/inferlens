@@ -54,6 +54,36 @@ preserves vLLM's `time.time()` as `wall_time_unix` for reference. Order
 `kv_*` events by `seq` (the ZMQ transport sequence number), not `ts` —
 see the `kv_*` note under Event kinds below.
 
+## Multi-source recording
+
+A single recording often draws from more than one collector running in
+**different OS processes** — for vLLM, the in-process stat logger (inside the
+engine's frontend process) and the out-of-process KV-event subscriber (inside
+the recorder). Two processes cannot safely share one open file handle, and
+their monotonic clocks share no zero point, so raw `ts` is **not** comparable
+across processes.
+
+The format therefore records **one file per source**, and merges on read:
+
+- Each source writes an independent, self-contained trace stream, beginning
+  with its own `trace_meta` — including its own `(wall_time_unix,
+  monotonic_time)` clock anchor. A source that emits no `trace_meta` is not
+  independently mergeable.
+- To combine sources, convert each stream's monotonic `ts` to wall time via
+  *that stream's own* anchor, then merge-sort on the resulting wall time.
+  Alignment precision is bounded by the anchor's capture skew and wall-clock
+  drift over the recording (typically sub-millisecond to millisecond) — fine
+  for timeline correlation, not intended for exact cross-source causal
+  ordering. Within a single source, order is exact (`kv_*` by `seq`, others by
+  arrival).
+
+This keeps each collector's write path local and crash-tolerant (no
+cross-process I/O funnel that could back-pressure an engine's event loop), and
+generalizes to N sources — additional engines, data-parallel ranks, or future
+collectors. A recorder MAY deliver the merged result as a single trace file;
+the merge is defined entirely by the per-source `trace_meta` anchors above, so
+it can equally happen at record time or lazily on read.
+
 ## Event kinds
 
 ### Implemented (schema v0.2)
@@ -126,10 +156,3 @@ banner).
   salted per trace? Leaning salted-per-trace by default.
 - Multi-engine / data-parallel traces: one file per engine index vs. an
   `engine_index` field on every event. Leaning per-event field.
-- How the KV-event subscriber and the in-process stat logger end up in one
-  trace file: they run in different OS processes (the stat logger inside
-  the vLLM frontend, the subscriber wherever `inferlens record` runs), so
-  they can't safely share one open file handle. Resolve when the `inferlens
-  record` wrapper is built — likely either the wrapper owns the only
-  `TraceWriter` and both sources feed it over an in-process queue, or each
-  source writes its own file and reader-side merges by `ts`.
