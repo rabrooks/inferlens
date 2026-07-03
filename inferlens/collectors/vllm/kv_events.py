@@ -226,17 +226,26 @@ class KVEventSubscriber:
             last_seq + 1,
             current_seq - 1,
         )
+        # Discard anything a previous timed-out replay left on the socket:
+        # stale frames would otherwise be mistaken for this request's reply.
+        while replay.poll(0):
+            replay.recv_multipart()
         replay.send_multipart((b"", (last_seq + 1).to_bytes(8, "big")))
+        # Always consume through the end-of-replay marker, even once the gap
+        # is filled: vLLM replays *every* buffered batch >= the requested
+        # seq, and frames left unread here would poison the next replay.
         while poller.poll(timeout=self._replay_timeout_ms):
             _empty, seq_bytes, payload = replay.recv_multipart()
             if not payload:
-                break  # end-of-replay marker
+                return last_seq  # end-of-replay marker
             replay_seq = int.from_bytes(seq_bytes, "big", signed=True)
             if replay_seq > last_seq:
                 self._decode_and_emit(payload, replay_seq)
                 last_seq = replay_seq
-            if replay_seq >= current_seq - 1:
-                break
+        _logger.warning(
+            "KV event replay timed out; events up to seq %d may be lost",
+            current_seq - 1,
+        )
         return last_seq
 
     def _decode_and_emit(self, payload: bytes, seq: int) -> None:

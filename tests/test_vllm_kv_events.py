@@ -189,6 +189,29 @@ def test_subscriber_receives_live_events(zmq_context):
     assert event.block_hashes == [123]
 
 
+def _replay_server(router, buffered, stop):
+    """Stand-in for vLLM's ``ZmqEventPublisher._service_replay``.
+
+    On request, sends one multipart reply per buffered batch >= start_seq,
+    then an end-of-replay marker (empty final frame). ``buffered`` is read
+    live on each request, so tests may grow it as they publish.
+    """
+    while not stop.is_set():
+        if router.poll(50):
+            frame = router.recv_multipart()
+            if len(frame) != 3:
+                continue
+            client_id, _empty, start_seq_bytes = frame
+            start_seq = int.from_bytes(start_seq_bytes, "big")
+            for seq, payload in sorted(buffered.items()):
+                if seq >= start_seq:
+                    router.send_multipart(
+                        (client_id, b"", seq.to_bytes(8, "big"), payload)
+                    )
+            end_seq = (-1).to_bytes(8, "big", signed=True)
+            router.send_multipart((client_id, b"", end_seq, b""))
+
+
 def test_subscriber_recovers_gap_via_replay(zmq_context):
     import zmq
 
@@ -215,28 +238,10 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
     )
     buffered = {0: seq0_payload, 1: seq1_payload, 2: seq2_payload}
 
-    # Stand-in for vLLM's ZmqEventPublisher._service_replay: on request,
-    # sends one multipart reply per buffered item >= start_seq, then an
-    # end-of-replay marker (empty final frame).
     stop_replay = threading.Event()
-
-    def replay_server():
-        while not stop_replay.is_set():
-            if router.poll(50):
-                frame = router.recv_multipart()
-                if len(frame) != 3:
-                    continue
-                client_id, _empty, start_seq_bytes = frame
-                start_seq = int.from_bytes(start_seq_bytes, "big")
-                for seq, payload in buffered.items():
-                    if seq >= start_seq:
-                        router.send_multipart(
-                            (client_id, b"", seq.to_bytes(8, "big"), payload)
-                        )
-                end_seq = (-1).to_bytes(8, "big", signed=True)
-                router.send_multipart((client_id, b"", end_seq, b""))
-
-    replay_thread = threading.Thread(target=replay_server, daemon=True)
+    replay_thread = threading.Thread(
+        target=_replay_server, args=(router, buffered, stop_replay), daemon=True
+    )
     replay_thread.start()
 
     sink = _FakeSink()
@@ -273,3 +278,70 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
         KVBlockRemoved,
         KVBlockStored,
     ]
+
+
+def test_subscriber_recovers_repeated_gaps(zmq_context):
+    """Regression: vLLM replays *every* buffered batch plus an end marker;
+    a first replay that stops reading once its own gap is filled must not
+    leave frames on the socket that poison the next replay."""
+    import zmq
+
+    pub = zmq_context.socket(zmq.PUB)
+    pub_port = pub.bind_to_random_port("tcp://127.0.0.1")
+    router = zmq_context.socket(zmq.ROUTER)
+    router_port = router.bind_to_random_port("tcp://127.0.0.1")
+
+    payloads = {
+        seq: _encode_batch([kv_events.AllBlocksCleared()], ts=float(seq))
+        for seq in range(6)
+    }
+    # Grown by publish(): like vLLM's publisher, the replay buffer holds
+    # only batches published so far — buffering future batches would let
+    # one replay's leftovers accidentally satisfy the next gap.
+    buffered = {}
+
+    stop_replay = threading.Event()
+    replay_thread = threading.Thread(
+        target=_replay_server, args=(router, buffered, stop_replay), daemon=True
+    )
+    replay_thread.start()
+
+    sink = _FakeSink()
+    subscriber = kv_events.KVEventSubscriber(
+        f"tcp://127.0.0.1:{pub_port}",
+        sink,
+        replay_endpoint=f"tcp://127.0.0.1:{router_port}",
+    )
+    subscriber.start()
+
+    def publish(seq):
+        # Publishing seq N means vLLM already buffered batches 0..N, even
+        # the ones our SUB socket never sees.
+        for missed in range(seq + 1):
+            buffered.setdefault(missed, payloads[missed])
+        pub.send_multipart((b"", seq.to_bytes(8, "big"), payloads[seq]))
+
+    def received_seqs():
+        return {e.seq for e in sink.snapshot()}
+
+    try:
+
+        def publish_seq0_until_received():
+            publish(0)
+            return 0 in received_seqs()
+
+        assert _wait_until(publish_seq0_until_received)
+
+        publish(2)  # first gap: seq 1 exists only in the replay buffer
+        assert _wait_until(lambda: {0, 1, 2} <= received_seqs())
+
+        publish(5)  # second gap: seqs 3 and 4 exist only in the replay buffer
+        assert _wait_until(lambda: {3, 4, 5} <= received_seqs())
+    finally:
+        subscriber.stop()
+        stop_replay.set()
+        replay_thread.join(timeout=2.0)
+        pub.close(linger=0)
+        router.close(linger=0)
+
+    assert sorted(received_seqs()) == [0, 1, 2, 3, 4, 5]
