@@ -372,6 +372,18 @@ instead (no such FSM restriction), manually prepending the empty
 delimiter frame `REQ` would otherwise add automatically — verified
 wire-compatible with the real `ROUTER`-side framing.
 
+A second, independent bug in the same reference client: it stops reading
+once its own gap is filled (`seq >= end_seq` break) without draining the
+rest of the response. Since `_service_replay` always sends *every*
+buffered batch ≥ the requested seq plus an end marker, the unread tail
+stays queued on the socket, and the next replay request consumes the
+stale end marker as its own "replay complete" — from the second gap on,
+replayed events are lost or misattributed. Reproduced against our own
+subscriber (which initially mirrored the reference logic) with a two-gap
+scenario; fixed by always reading through the end-of-replay marker and
+discarding stale frames before each new request. Both bugs belong in one
+upstream report.
+
 **Config:** `--kv-events-config '{"enable_kv_cache_events": true, ...}'`
 (`config/kv_events.py:10`; fields: `endpoint`, `replay_endpoint`,
 `buffer_steps`, `hwm`, `topic`). Prefix caching should be enabled or
