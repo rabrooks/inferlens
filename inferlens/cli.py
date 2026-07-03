@@ -16,14 +16,25 @@ def _cmd_info(args: argparse.Namespace) -> int:
     meta: TraceMeta | None = None
     first_ts: float | None = None
     last_ts: float | None = None
-    for event in read_trace(args.trace):
-        counts[event.KIND] += 1
-        if isinstance(event, TraceMeta):
-            meta = event
-        else:
-            ts = event.ts
-            first_ts = ts if first_ts is None else min(first_ts, ts)
-            last_ts = ts if last_ts is None else max(last_ts, ts)
+    try:
+        for event in read_trace(args.trace):
+            counts[event.KIND] += 1
+            if isinstance(event, TraceMeta):
+                meta = event
+            else:
+                ts = event.ts
+                first_ts = ts if first_ts is None else min(first_ts, ts)
+                last_ts = ts if last_ts is None else max(last_ts, ts)
+    except OSError as exc:
+        # Covers the missing/unreadable/not-actually-gzip file cases with
+        # one friendly line instead of a traceback.
+        print(f"error: cannot read {args.trace}: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        # E.g. an unsupported schema major version, or a binary file that
+        # isn't valid UTF-8.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     if not counts:
         print(f"{args.trace}: empty trace", file=sys.stderr)

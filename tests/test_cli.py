@@ -46,6 +46,29 @@ def test_info_empty_trace(tmp_path, capsys):
     assert "empty trace" in capsys.readouterr().err
 
 
+def test_info_missing_file_prints_error_not_traceback(tmp_path, capsys):
+    assert main(["info", str(tmp_path / "nope.ilens")]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: cannot read")
+
+
+def test_info_unsupported_schema_major(tmp_path, capsys):
+    trace = tmp_path / "future.ilens"
+    with TraceWriter(trace) as writer:
+        writer.write(
+            TraceMeta(
+                engine="vllm",
+                engine_version="99.0",
+                model="m",
+                wall_time_unix=0.0,
+                monotonic_time=0.0,
+                schema_version="1.0",
+            )
+        )
+    assert main(["info", str(trace)]) == 1
+    assert "unsupported trace schema" in capsys.readouterr().err
+
+
 def test_record_and_view_are_stubs(capsys):
     assert main(["record"]) == 2
     assert main(["view"]) == 2
