@@ -66,7 +66,7 @@ class RequestFinished:
 
 @dataclass(slots=True)
 class KVBlockStored:
-    """A KV cache block chain was stored (vLLM ``BlockStored``).
+    """A KV cache block chain was stored (e.g. vLLM's ``BlockStored``).
 
     Token content is deliberately not recorded — only ``num_tokens`` — so a
     trace never carries prompt text. ``block_hashes`` alone already raise a
@@ -88,7 +88,7 @@ class KVBlockStored:
 
 @dataclass(slots=True)
 class KVBlockRemoved:
-    """A KV cache block was evicted (vLLM ``BlockRemoved``)."""
+    """A KV cache block was evicted (e.g. vLLM's ``BlockRemoved``)."""
 
     KIND: ClassVar[str] = "kv_block_removed"
 
@@ -102,7 +102,7 @@ class KVBlockRemoved:
 
 @dataclass(slots=True)
 class KVCacheCleared:
-    """The whole prefix cache was reset (vLLM ``AllBlocksCleared``)."""
+    """The whole prefix cache was reset (e.g. vLLM's ``AllBlocksCleared``)."""
 
     KIND: ClassVar[str] = "kv_cache_cleared"
 
@@ -144,7 +144,7 @@ TraceEvent = (
     | CollectorGap
 )
 
-EVENT_TYPES: dict[str, type] = {
+EVENT_TYPES: dict[str, type[TraceEvent]] = {
     cls.KIND: cls
     for cls in (
         TraceMeta,

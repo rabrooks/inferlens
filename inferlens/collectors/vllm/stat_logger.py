@@ -1,4 +1,4 @@
-"""vLLM stat-logger plugin (work in progress).
+"""vLLM stat-logger plugin.
 
 vLLM discovers :class:`InferLensStatLogger` through the
 ``vllm.stat_logger_plugins`` entry-point group and instantiates it per

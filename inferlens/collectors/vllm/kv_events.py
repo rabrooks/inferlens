@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Protocol
+from types import TracebackType
+from typing import Any
 
 import msgspec
 import zmq
@@ -35,6 +36,7 @@ from inferlens.schema import (
     KVCacheCleared,
     TraceEvent,
 )
+from inferlens.trace_io import EventSink
 
 _logger = logging.getLogger(__name__)
 
@@ -44,6 +46,9 @@ GAP_SOURCE = "vllm_kv_events"
 ExternalBlockHash = bytes | int
 
 
+# The struct class names below ARE the wire format: ``tag=True`` makes
+# msgspec use the class name as each event's tag on decode, so they must
+# match vLLM's class names exactly. Do not rename them to fit project style.
 class EventBatch(
     msgspec.Struct,
     array_like=True,
@@ -135,12 +140,6 @@ def _translate_event(
     return KVCacheCleared(ts=ts, seq=seq, wall_time_unix=wall_time_unix)
 
 
-class EventSink(Protocol):
-    """What :class:`KVEventSubscriber` needs from a trace writer."""
-
-    def write(self, event: TraceEvent) -> None: ...
-
-
 class KVEventSubscriber:
     """Background thread that turns vLLM's KV-event stream into trace events.
 
@@ -189,7 +188,12 @@ class KVEventSubscriber:
         self.start()
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.stop()
 
     def _run(self) -> None:

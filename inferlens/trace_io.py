@@ -18,7 +18,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
-from typing import IO, Any, Literal
+from typing import IO, Any, Literal, Protocol
 
 from inferlens.schema import (
     SCHEMA_VERSION,
@@ -29,6 +29,19 @@ from inferlens.schema import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+class EventSink(Protocol):
+    """The minimal interface a collector needs to emit trace events.
+
+    Engine collectors write to this Protocol rather than to a concrete
+    writer, so a recording pipeline can hand them a :class:`TraceWriter`,
+    a :class:`BufferedTraceWriter`, or something else entirely (e.g. an
+    in-process queue feeding a single shared writer) without the collector
+    knowing the difference.
+    """
+
+    def write(self, event: TraceEvent) -> None: ...
 
 
 def _open(path: Path, mode: Literal["r", "w"]) -> IO[str]:

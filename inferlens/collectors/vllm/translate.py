@@ -8,6 +8,11 @@ the clock model these functions assume (``ts`` is the collector's own
 monotonic-clock reading, captured once per ``record()`` call; durations
 inside ``FinishedRequestStats`` are engine-supplied deltas, passed through
 as-is).
+
+Attribute-access convention: fields we require are read directly, so a
+renamed vLLM field raises ``AttributeError`` into the stat logger's
+catch-all, which disables the plugin loudly rather than recording wrong
+data. Only genuinely optional or nested stats use ``getattr`` defaults.
 """
 
 from __future__ import annotations
@@ -53,9 +58,13 @@ def request_finished_events(iteration_stats: Any, ts: float) -> list[RequestFini
 def _request_finished(stat: Any, ts: float) -> RequestFinished:
     finish_reason = stat.finish_reason
     reason_name = getattr(finish_reason, "name", None)
+    # Lowercasing vLLM's enum names (STOP/LENGTH/ABORT/ERROR/REPETITION) is
+    # the whole mapping onto the trace spec's finish_reason vocabulary.
     return RequestFinished(
         ts=ts,
-        request_id=stat.request_id,
+        # None is possible on the vLLM side (defaulted field); the schema
+        # wants a string.
+        request_id=stat.request_id or "",
         finish_reason=(reason_name or str(finish_reason)).lower(),
         e2e_latency_s=stat.e2e_latency,
         queued_time_s=stat.queued_time,

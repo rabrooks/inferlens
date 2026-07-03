@@ -52,7 +52,7 @@ therefore uses its own receive-time monotonic clock for `ts`, keeping the
 cross-source invariant that every `ts` is directly comparable, and
 preserves vLLM's `time.time()` as `wall_time_unix` for reference. Order
 `kv_*` events by `seq` (the ZMQ transport sequence number), not `ts` —
-see the `kv_*` row group above.
+see the `kv_*` note under Event kinds below.
 
 ## Event kinds
 
@@ -70,8 +70,26 @@ see the `kv_*` row group above.
 
 Field lists are normative in `inferlens/schema/events.py` (dataclasses).
 
+### `finish_reason` vocabulary
+
+`request_finished.finish_reason` draws from a canonical, engine-neutral
+core:
+
+| value | meaning |
+| --- | --- |
+| `stop` | natural completion — a stop token/string/pattern matched |
+| `length` | `max_tokens` or the context-window limit was reached |
+| `abort` | cancelled by the client or by engine shutdown |
+| `error` | the request failed with an engine-internal error |
+
+Collectors MUST map engine-native reasons onto these values where the
+meaning matches (vLLM's `STOP/LENGTH/ABORT/ERROR` and SGLang's
+`stop/length/abort` all map 1:1) and MAY pass through reasons with no
+canonical equivalent as additional lowercase strings (e.g. vLLM's
+`repetition`). Readers MUST treat unknown values as opaque, not as errors.
+
 `kv_*` events carry three time references instead of one, because their
-source batch has no monotonic timestamp (see Clock model below): `ts` is
+source batch has no monotonic timestamp (see Clock model above): `ts` is
 this collector's own monotonic receive time (comparable to every other
 event's `ts`), `wall_time_unix` is vLLM's wall-clock batch-assembly
 timestamp (excludes ZMQ queue latency, useful for cross-checking against
