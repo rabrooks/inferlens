@@ -14,6 +14,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
@@ -34,7 +35,10 @@ def _open(path: Path, mode: Literal["r", "w"]) -> IO[str]:
     if path.suffix == ".gz":
         if mode == "r":
             return gzip.open(path, "rt", encoding="utf-8")
-        return gzip.open(path, "wt", encoding="utf-8")
+        # Level 6 over the default 9: on JSONL the size difference is a few
+        # percent, but level 9 costs roughly double the CPU — and the writer
+        # thread shares cores with the engine being traced.
+        return gzip.open(path, "wt", encoding="utf-8", compresslevel=6)
     return open(path, mode, encoding="utf-8")
 
 
@@ -49,6 +53,14 @@ class TraceWriter:
         """Write one event as a single JSONL record."""
         json.dump(to_record(event), self._file, separators=(",", ":"))
         self._file.write("\n")
+
+    def flush(self) -> None:
+        """Push buffered data to the OS (for gzip, sync-flush the stream).
+
+        After a flush, everything written so far survives the *process*
+        dying; surviving power loss (fsync) is out of scope.
+        """
+        self._file.flush()
 
     def close(self) -> None:
         """Flush and close the underlying file."""
@@ -75,12 +87,23 @@ class BufferedTraceWriter:
     blocking the caller, since callers of this class (e.g. the vLLM
     stat-logger plugin) must never stall their engine's event loop. See
     ``dropped`` for the count.
+
+    Durability: the file is flushed at least every ``flush_interval_s``
+    seconds, so a hard-killed recording loses at most that window of
+    events (see the crash-tolerance goal in ``docs/TRACE_SPEC.md``).
     """
 
-    def __init__(self, path: str | Path, maxsize: int = 10_000) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        maxsize: int = 10_000,
+        flush_interval_s: float = 1.0,
+    ) -> None:
         self._writer = TraceWriter(path)
         self._queue: queue.Queue[TraceEvent | None] = queue.Queue(maxsize=maxsize)
+        self._flush_interval_s = flush_interval_s
         self.dropped = 0
+        self._closed = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -92,22 +115,42 @@ class BufferedTraceWriter:
             self.dropped += 1
 
     def _run(self) -> None:
+        next_flush = time.monotonic() + self._flush_interval_s
+        dirty = False
         while True:
-            item = self._queue.get()
-            if item is None:
-                return
             try:
-                self._writer.write(item)
-            except Exception:
-                _logger.exception("dropping trace event that failed to write")
+                item = self._queue.get(timeout=self._flush_interval_s)
+                if item is None:
+                    return  # close() flushes via TraceWriter.close()
+                try:
+                    self._writer.write(item)
+                    dirty = True
+                except Exception:
+                    _logger.exception("dropping trace event that failed to write")
+            except queue.Empty:
+                pass
+            if dirty and time.monotonic() >= next_flush:
+                try:
+                    self._writer.flush()
+                    dirty = False
+                except Exception:
+                    _logger.exception("failed to flush trace file")
+                next_flush = time.monotonic() + self._flush_interval_s
 
     def close(self, timeout: float = 5.0) -> None:
         """Drain the queue and close the underlying file.
 
         Safe to call more than once (e.g. an explicit call racing an
-        ``atexit`` hook): closing an already-closed writer is a no-op.
+        ``atexit`` hook): later calls are no-ops. Never blocks shutdown for
+        more than ~2x ``timeout``, even with a wedged writer thread.
         """
-        self._queue.put(None)
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._queue.put(None, timeout=timeout)
+        except queue.Full:
+            _logger.warning("trace write queue still full at close; events lost")
         self._thread.join(timeout=timeout)
         self._writer.close()
 

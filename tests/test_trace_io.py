@@ -2,6 +2,7 @@
 
 import gzip
 import json
+import time
 
 import pytest
 
@@ -147,6 +148,32 @@ def test_buffered_trace_writer_roundtrip(tmp_path):
             writer.write(event)
 
     assert list(read_trace(path)) == [META, SNAPSHOT, FINISHED]
+
+
+def test_buffered_trace_writer_flushes_without_close(tmp_path):
+    # The durability contract: events must reach disk within the flush
+    # interval even if the writer is never closed (hard-killed recorder).
+    path = tmp_path / "trace.ilens"
+    writer = BufferedTraceWriter(path, flush_interval_s=0.05)
+    try:
+        writer.write(META)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if list(read_trace(path)) == [META]:
+                break
+            time.sleep(0.02)
+        assert list(read_trace(path)) == [META]
+    finally:
+        writer.close()
+
+
+def test_buffered_trace_writer_close_is_idempotent(tmp_path):
+    writer = BufferedTraceWriter(tmp_path / "trace.ilens")
+    writer.write(META)
+    writer.close()
+    writer.close()  # e.g. an explicit close racing the atexit hook
+
+    assert list(read_trace(tmp_path / "trace.ilens")) == [META]
 
 
 def test_buffered_trace_writer_drops_past_maxsize(tmp_path):

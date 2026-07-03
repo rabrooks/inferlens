@@ -12,7 +12,10 @@
    SGLang. Where an existing community vocabulary exists (e.g. llm-d's
    KVEvents), prefer its naming.
 2. **Crash-tolerant.** A truncated trace must remain readable up to the
-   truncation point (this is what makes the flight-recorder use case free).
+   truncation point (this is what makes the flight-recorder use case free),
+   and writers must bound the loss window: the reference writer flushes at
+   least every second, so a hard-killed recording loses at most that much.
+   (Surviving power loss — fsync — is out of scope.)
 3. **Cheap to produce.** Writable from a hot path with negligible overhead;
    no schema registry or service required to read a file later.
 4. **Self-describing.** A trace file alone is enough to render every view in
