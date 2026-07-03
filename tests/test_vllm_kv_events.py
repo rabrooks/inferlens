@@ -14,6 +14,7 @@ from inferlens.schema import (  # noqa: E402
     KVBlockRemoved,
     KVBlockStored,
     KVCacheCleared,
+    TraceMeta,
 )
 
 # --- translation (pure, no sockets) -----------------------------------------
@@ -130,6 +131,10 @@ class _FakeSink:
         with self._lock:
             return list(self._events)
 
+    def events(self):
+        """Everything but the trace_meta anchor written at start()."""
+        return [e for e in self.snapshot() if not isinstance(e, TraceMeta)]
+
 
 def _encode_batch(events, ts=1000.0):
     batch = kv_events.KVEventBatch(ts=ts, events=events)
@@ -179,14 +184,14 @@ def test_subscriber_receives_live_events(zmq_context):
             # have propagated to the publisher yet when the first message
             # is sent, silently dropping it.
             pub.send_multipart((b"", (0).to_bytes(8, "big"), payload))
-            return len(sink.snapshot()) > 0
+            return len(sink.events()) > 0
 
         assert _wait_until(publish_until_received)
     finally:
         subscriber.stop()
         pub.close(linger=0)
 
-    [event] = sink.snapshot()
+    [event] = sink.events()
     assert isinstance(event, KVBlockStored)
     assert event.seq == 0
     assert event.wall_time_unix == 42.0
@@ -260,7 +265,7 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
 
         def publish_seq0_until_received():
             pub.send_multipart((b"", (0).to_bytes(8, "big"), seq0_payload))
-            return len(sink.snapshot()) > 0
+            return len(sink.events()) > 0
 
         assert _wait_until(publish_seq0_until_received)
 
@@ -268,7 +273,7 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
         # it, so this only passes if replay recovery actually works.
         pub.send_multipart((b"", (2).to_bytes(8, "big"), seq2_payload))
 
-        assert _wait_until(lambda: len(sink.snapshot()) >= 3)
+        assert _wait_until(lambda: len(sink.events()) >= 3)
     finally:
         subscriber.stop()
         stop_replay.set()
@@ -276,7 +281,7 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
         pub.close(linger=0)
         router.close(linger=0)
 
-    events = sink.snapshot()
+    events = sink.events()
     assert [e.seq for e in events] == [0, 1, 2]
     assert [type(e) for e in events] == [
         KVCacheCleared,
@@ -330,7 +335,7 @@ def test_subscriber_recovers_repeated_gaps(zmq_context):
         pub.send_multipart((b"", seq.to_bytes(8, "big"), payloads[seq]))
 
     def received_seqs():
-        return {e.seq for e in sink.snapshot()}
+        return {e.seq for e in sink.events()}
 
     try:
 
@@ -372,7 +377,7 @@ def test_subscriber_annotates_gap_when_replay_disabled(zmq_context):
 
         def publish_seq0_until_received():
             pub.send_multipart((b"", (0).to_bytes(8, "big"), payload))
-            return len(sink.snapshot()) > 0
+            return len(sink.events()) > 0
 
         assert _wait_until(publish_seq0_until_received)
 
@@ -406,7 +411,7 @@ def test_subscriber_survives_malformed_message(zmq_context):
         def publish_garbage_then_valid():
             pub.send_multipart((b"", b"only-two-frames"))
             pub.send_multipart((b"", (0).to_bytes(8, "big"), payload))
-            return len(sink.snapshot()) > 0
+            return len(sink.events()) > 0
 
         assert _wait_until(publish_garbage_then_valid)
     finally:
@@ -414,3 +419,29 @@ def test_subscriber_survives_malformed_message(zmq_context):
         pub.close(linger=0)
 
     assert any(isinstance(e, KVCacheCleared) for e in sink.snapshot())
+
+
+def test_subscriber_writes_trace_meta_anchor_at_start(zmq_context):
+    """The stream must be independently mergeable (TRACE_SPEC multi-source)."""
+    before_wall, before_mono = time.time(), time.monotonic()
+    sink = _FakeSink()
+    subscriber = kv_events.KVEventSubscriber(
+        "tcp://127.0.0.1:1",  # never published to; only the anchor matters
+        sink,
+        engine_version="0.23.1",
+        model="test-model",
+    )
+    subscriber.start()
+    try:
+        [meta] = sink.snapshot()
+    finally:
+        subscriber.stop()
+
+    assert isinstance(meta, TraceMeta)
+    assert meta.engine == "vllm"
+    assert meta.engine_version == "0.23.1"
+    assert meta.model == "test-model"
+    assert before_wall <= meta.wall_time_unix <= time.time()
+    assert before_mono <= meta.monotonic_time <= time.monotonic()
+    assert meta.extra["source"] == kv_events.GAP_SOURCE
+    assert meta.extra["kv_ts_source"] == "subscriber_receive"

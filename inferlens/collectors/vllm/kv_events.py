@@ -35,6 +35,7 @@ from inferlens.schema import (
     KVBlockStored,
     KVCacheCleared,
     TraceEvent,
+    TraceMeta,
 )
 from inferlens.trace_io import EventSink
 
@@ -171,6 +172,8 @@ class KVEventSubscriber:
         topic: str = "",
         poll_timeout_ms: int = 100,
         replay_timeout_ms: int = 200,
+        engine_version: str = "",
+        model: str = "",
     ) -> None:
         self._endpoint = endpoint
         self._replay_endpoint = replay_endpoint
@@ -178,13 +181,33 @@ class KVEventSubscriber:
         self._sink = sink
         self._poll_timeout_ms = poll_timeout_ms
         self._replay_timeout_ms = replay_timeout_ms
+        self._engine_version = engine_version
+        self._model = model
         self._decoder = msgspec.msgpack.Decoder(type=KVEventBatch)
         self._ctx = zmq.Context.instance()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
-        """Start the subscriber thread."""
+        """Write this stream's clock anchor, then start the subscriber thread.
+
+        The subscriber usually runs in a different OS process than the stat
+        logger, so its stream needs its own ``trace_meta``
+        ``(wall, monotonic)`` anchor to be independently mergeable — see
+        "Multi-source recording" in ``docs/TRACE_SPEC.md``. ``kv_ts_source``
+        records that ``ts`` values are subscriber receive times, so a future
+        engine-side timestamp policy is distinguishable in old traces.
+        """
+        self._sink.write(
+            TraceMeta(
+                engine="vllm",
+                engine_version=self._engine_version,
+                model=self._model,
+                wall_time_unix=time.time(),
+                monotonic_time=time.monotonic(),
+                extra={"source": GAP_SOURCE, "kv_ts_source": "subscriber_receive"},
+            )
+        )
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
