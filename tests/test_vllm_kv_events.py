@@ -286,9 +286,12 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
 
 
 def test_subscriber_recovers_repeated_gaps(zmq_context):
-    """Regression: vLLM replays *every* buffered batch plus an end marker;
-    a first replay that stops reading once its own gap is filled must not
-    leave frames on the socket that poison the next replay."""
+    """Regression: a first replay must not poison the next one.
+
+    vLLM replays *every* buffered batch plus an end marker; a replay that
+    stops reading once its own gap is filled leaves frames on the socket
+    that a later replay would mistake for its own response.
+    """
     import zmq
 
     pub = zmq_context.socket(zmq.PUB)
@@ -353,8 +356,10 @@ def test_subscriber_recovers_repeated_gaps(zmq_context):
 
 
 def test_subscriber_annotates_gap_when_replay_disabled(zmq_context):
-    """Without a replay endpoint, missed batches must surface in the trace
-    as a collector_gap event — holes are allowed, silent holes are not."""
+    """Without replay, missed batches must surface as a collector_gap.
+
+    Holes in a trace are allowed; silent holes are not.
+    """
     import zmq
 
     pub = zmq_context.socket(zmq.PUB)

@@ -55,6 +55,8 @@ class EventBatch(
     omit_defaults=True,
     gc=False,
 ):
+    """Envelope for one published batch of KV cache events."""
+
     ts: float
     events: list[Any]
 
@@ -69,6 +71,8 @@ class KVCacheEvent(
 
 
 class BlockStored(KVCacheEvent):
+    """A chain of KV blocks was stored."""
+
     block_hashes: list[ExternalBlockHash]
     parent_block_hash: ExternalBlockHash | None
     token_ids: list[int]
@@ -78,16 +82,20 @@ class BlockStored(KVCacheEvent):
 
 
 class BlockRemoved(KVCacheEvent):
+    """KV blocks were evicted from the cache."""
+
     block_hashes: list[ExternalBlockHash]
     medium: str | None
     group_idx: int = 0
 
 
 class AllBlocksCleared(KVCacheEvent):
-    pass
+    """The whole prefix cache was reset."""
 
 
 class KVEventBatch(EventBatch):
+    """``EventBatch`` narrowed to the concrete KV event types."""
+
     events: list[BlockStored | BlockRemoved | AllBlocksCleared]
 
 

@@ -41,7 +41,8 @@ class EventSink(Protocol):
     knowing the difference.
     """
 
-    def write(self, event: TraceEvent) -> None: ...
+    def write(self, event: TraceEvent) -> None:
+        """Record one event; must be safe to call from the collector's thread."""
 
 
 def _open(path: Path, mode: Literal["r", "w"]) -> IO[str]:

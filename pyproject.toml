@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inferlens"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 authors = [{ name = "InferLens Team" }]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -45,6 +45,10 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/rabrooks/inferlens"
 
+# Single source of truth for the version: inferlens/__init__.py.
+[tool.hatch.version]
+path = "inferlens/__init__.py"
+
 [project.scripts]
 inferlens = "inferlens.cli:main"
 
@@ -74,7 +78,16 @@ select = [
     "I",
     # flake8-logging-format
     "G",
+    # pydocstyle — actually enforces the Google docstring convention below
+    "D",
 ]
+# Google style doesn't require docstrings on dunders or obvious __init__s.
+ignore = ["D105", "D107"]
+
+[tool.ruff.lint.per-file-ignores]
+# In tests and examples the function names are the documentation.
+"tests/**" = ["D1"]
+"examples/**" = ["D1"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -87,6 +100,11 @@ python_version = "3.10"
 check_untyped_defs = true
 disallow_untyped_defs = true
 warn_unused_ignores = true
+
+# Only the engine and its transport deps (absent in a core-only dev env)
+# may be missing; a typo in one of our own imports must still be an error.
+[[tool.mypy.overrides]]
+module = ["vllm", "vllm.*", "zmq", "zmq.*", "msgspec", "msgspec.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
