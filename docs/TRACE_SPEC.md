@@ -24,8 +24,10 @@ A trace is a **JSON Lines** stream: one JSON object ("record") per `\n`
 terminated line, UTF-8, optionally gzip-compressed (detected by the `.gz`
 suffix). Conventional extension: `.ilens` / `.ilens.gz`.
 
-Readers MUST ignore unknown record fields (forward compatibility) and MUST
-treat a final line that fails to parse as end-of-trace, not an error.
+Readers MUST ignore unknown record fields, MUST skip records whose `kind`
+they don't know (both are how *minor* schema additions stay
+forward-compatible — see Versioning), and MUST treat a final line that
+fails to parse as end-of-trace, not an error.
 
 ## Envelope
 

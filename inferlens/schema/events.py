@@ -8,7 +8,7 @@ time so multiple event sources can be aligned.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, ClassVar
 
 SCHEMA_VERSION = "0.1"
@@ -132,6 +132,10 @@ EVENT_TYPES: dict[str, type] = {
     )
 }
 
+_FIELD_NAMES: dict[str, frozenset[str]] = {
+    kind: frozenset(f.name for f in fields(cls)) for kind, cls in EVENT_TYPES.items()
+}
+
 
 def to_record(event: TraceEvent) -> dict[str, Any]:
     """Serialize an event to a JSON-ready record with a ``kind`` tag."""
@@ -143,14 +147,19 @@ def to_record(event: TraceEvent) -> dict[str, Any]:
 def from_record(record: dict[str, Any]) -> TraceEvent:
     """Deserialize a record produced by :func:`to_record`.
 
+    Unknown fields are dropped, per the trace spec: a newer *minor* schema
+    version may have added optional fields this reader doesn't know.
+
     Raises:
         ValueError: If the record has no ``kind`` tag or an unknown one.
+        TypeError: If the record is missing required fields for its kind.
     """
-    fields = dict(record)
-    kind = fields.pop("kind", None)
+    values = dict(record)
+    kind = values.pop("kind", None)
     if kind is None:
         raise ValueError("record has no 'kind' tag")
     event_type = EVENT_TYPES.get(kind)
     if event_type is None:
         raise ValueError(f"unknown event kind: {kind!r}")
-    return event_type(**fields)
+    known = _FIELD_NAMES[kind]
+    return event_type(**{k: v for k, v in values.items() if k in known})

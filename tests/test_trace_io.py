@@ -1,6 +1,7 @@
 """Round-trip tests for the trace reader/writer."""
 
 import gzip
+import json
 
 import pytest
 
@@ -65,6 +66,59 @@ def test_from_record_rejects_unknown_kind():
         from_record({"kind": "nope"})
     with pytest.raises(ValueError, match="no 'kind' tag"):
         from_record({"ts": 1.0})
+
+
+def test_from_record_ignores_unknown_fields():
+    # A newer minor schema version may add optional fields; per the spec,
+    # readers must ignore them rather than fail.
+    record = to_record(SNAPSHOT)
+    record["field_from_the_future"] = 42
+    assert from_record(record) == SNAPSHOT
+
+
+def test_read_trace_skips_unknown_and_malformed_records(tmp_path):
+    # Unknown kinds (added by a newer minor version) and malformed records
+    # are skipped; valid records *after* them must still be read.
+    path = tmp_path / "trace.ilens"
+    with TraceWriter(path) as writer:
+        writer.write(META)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write('{"kind": "kind_from_the_future", "ts": 3.0}\n')
+        f.write('{"kind": "engine_snapshot"}\n')  # missing required fields
+        f.write(json.dumps(to_record(SNAPSHOT)) + "\n")
+
+    assert list(read_trace(path)) == [META, SNAPSHOT]
+
+
+def test_read_trace_rejects_future_major(tmp_path):
+    path = tmp_path / "trace.ilens"
+    future_meta = TraceMeta(
+        engine="vllm",
+        engine_version="99.0",
+        model="m",
+        wall_time_unix=0.0,
+        monotonic_time=0.0,
+        schema_version="1.0",
+    )
+    with TraceWriter(path) as writer:
+        writer.write(future_meta)
+
+    with pytest.raises(ValueError, match="unsupported trace schema"):
+        list(read_trace(path))
+
+
+def test_read_trace_tolerates_truncated_gzip(tmp_path):
+    # A recorder killed mid-write leaves a gzip stream with no trailer;
+    # the decompressed prefix must still be readable without raising.
+    lines = "".join(
+        json.dumps(to_record(event)) + "\n" for event in (META, SNAPSHOT, FINISHED)
+    )
+    blob = gzip.compress(lines.encode())
+    path = tmp_path / "trace.ilens.gz"
+    path.write_bytes(blob[:-12])  # chop the gzip trailer and then some
+
+    events = list(read_trace(path))  # must not raise
+    assert events == [META, SNAPSHOT, FINISHED][: len(events)]
 
 
 def test_truncated_trace_keeps_readable_prefix(tmp_path):

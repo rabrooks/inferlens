@@ -17,9 +17,15 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
-from typing import IO, Literal
+from typing import IO, Any, Literal
 
-from inferlens.schema import TraceEvent, from_record, to_record
+from inferlens.schema import (
+    SCHEMA_VERSION,
+    TraceEvent,
+    TraceMeta,
+    from_record,
+    to_record,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -118,15 +124,57 @@ class BufferedTraceWriter:
 
 
 def read_trace(path: str | Path) -> Iterator[TraceEvent]:
-    """Yield events from a trace file, stopping at a truncated final line."""
+    """Yield events from a trace file.
+
+    Tolerant by design, per the spec's forward-compatibility rules: records
+    of unknown kind or shape are skipped with a warning (a newer *minor*
+    schema version may have added them), and a truncated final line or gzip
+    stream ends the trace rather than raising (a crashed recording keeps
+    its readable prefix).
+
+    Raises:
+        ValueError: If the trace declares a schema *major* version this
+            reader doesn't support.
+    """
+    skipped_kinds: set[Any] = set()
     with _open(Path(path), "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                # Interrupted recording: the readable prefix is still valid.
-                return
-            yield from_record(record)
+        try:
+            for lineno, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    # Interrupted recording: the readable prefix is valid.
+                    return
+                try:
+                    event = from_record(record)
+                except (TypeError, ValueError):
+                    kind = record.get("kind") if isinstance(record, dict) else None
+                    if kind not in skipped_kinds:
+                        skipped_kinds.add(kind)
+                        _logger.warning(
+                            "skipping unreadable record kind=%r (first at %s:%d)",
+                            kind,
+                            path,
+                            lineno,
+                        )
+                    continue
+                if isinstance(event, TraceMeta):
+                    _check_schema_major(event.schema_version, path)
+                yield event
+        except EOFError:
+            # A gzip stream cut off mid-write (crashed recorder): everything
+            # decompressed so far has already been yielded.
+            return
+
+
+def _check_schema_major(version: str, path: str | Path) -> None:
+    """Reject majors we don't know; minors are forward-compatible."""
+    major = version.split(".", 1)[0]
+    if major != SCHEMA_VERSION.split(".", 1)[0]:
+        raise ValueError(
+            f"{path}: unsupported trace schema version {version!r} "
+            f"(this reader supports {SCHEMA_VERSION!r})"
+        )
