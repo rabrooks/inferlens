@@ -348,7 +348,13 @@ transport **sequence number**, not `ts`.
 
 **Transport:** PUB socket (default `tcp://*:5557`, binds on wildcard),
 3-frame multipart `[topic, seq (8-byte big-endian), msgpack payload]`
-(`kv_events.py:438`). Optional ROUTER replay endpoint: subscriber sends a
+(`kv_events.py:438`). **Bind-vs-connect trap:** `_socket_setup` only
+*binds* the PUB endpoint when it contains a wildcard (`*`, `::`) or is
+`ipc://`/`inproc://`; a concrete address like `tcp://127.0.0.1:5557`
+makes vLLM silently *connect* instead — pair that with a connecting
+subscriber and no events flow at all (hit for real while wiring
+`inferlens record`; the injected config must use the `tcp://*:<port>`
+form). The replay ROUTER, in contrast, always binds. Optional ROUTER replay endpoint: subscriber sends a
 start-seq as 8-byte BE, receives buffered batches (in-memory ring, default
 `buffer_steps=10_000`), terminated by a `-1` marker (`kv_events.py:448`).
 PUB drops silently past HWM or with no subscriber; no heartbeat — idle and
