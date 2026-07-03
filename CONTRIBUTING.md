@@ -31,6 +31,8 @@ uv run pytest                # run the test suite
 - The core package (`inferlens.schema`, `inferlens.trace_io`, `inferlens.cli`)
   must stay dependency-free and importable without any engine installed.
   Engine collectors import their engine lazily, never at module import time.
+- Adding support for a new engine? The collector contract lives in
+  [docs/collectors.md](docs/collectors.md).
 
 Run everything locally before pushing:
 
