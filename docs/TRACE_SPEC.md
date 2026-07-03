@@ -127,6 +127,16 @@ timestamp (excludes ZMQ queue latency, useful for cross-checking against
 the only field that gives exact ordering, since one wall-clock `ts` can
 cover a batch of several events.
 
+Viewers SHOULD place `kv_*` events on the timeline by `wall_time_unix`,
+not by anchor-converted `ts`. Receive time includes ZMQ delivery latency,
+and for events recovered via gap replay it can be *seconds* after the
+fact — placement by `ts` would draw a recovered eviction at recovery time,
+not when it happened. The `ts`-vs-`wall_time_unix` delta is still useful
+as a delivery-latency diagnostic. (If an engine ever publishes properly
+anchored event timestamps — see `upstream-gaps.md` §7 — `ts` becomes the
+placement field and this note retires; the kv stream's `trace_meta` says
+which policy produced it, see Multi-source recording.)
+
 ### Planned
 
 | kind | one line | source |

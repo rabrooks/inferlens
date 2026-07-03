@@ -111,8 +111,20 @@ Line citations pinned to vLLM `main` @ `63fcce4de` (2026-07-01); see
   (`VLLM_KV_EVENTS_USE_INT_BLOCK_HASHES`, `envs.py:1753`); no per-event
   timestamps (one wall-clock `ts` per batch, `scheduler.py:1791`); no
   heartbeat, so an idle publisher and a dead one look identical.
+- **Timestamp ask, precisely:** per-event timestamps as a
+  `(time.time(), time.monotonic())` *pair* — or monotonic timestamps plus
+  a clock-anchor record in the stream. A bare `time.monotonic()` would be
+  useless to an external subscriber: the engine-core monotonic clock has
+  no meaning in another process (vLLM documents this itself,
+  `engine/__init__.py:159`), so without an anchor the subscriber can't
+  relate it to anything. Getting this right upstream is what would let a
+  recorder place KV events by publish time instead of receive time and
+  retire the receive-time workaround in TRACE_SPEC's clock model.
 - **Why:** a trace recorder must survive vLLM upgrades and detect data
-  loss; today both require out-of-band knowledge.
+  loss; today both require out-of-band knowledge. Replay-recovered events
+  arrive long after the fact, so receive time is the *only* subscriber-side
+  timestamp and it's wrong for exactly the events (evictions under
+  pressure) a recorder most cares about.
 - **Status:** not filed; align with llm-d KVEvents schema discussions
   before proposing anything here.
 
