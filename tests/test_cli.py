@@ -69,7 +69,6 @@ def test_info_unsupported_schema_major(tmp_path, capsys):
     assert "unsupported trace schema" in capsys.readouterr().err
 
 
-def test_record_and_view_are_stubs(capsys):
-    assert main(["record"]) == 2
+def test_view_is_a_stub(capsys):
     assert main(["view"]) == 2
     assert "not implemented" in capsys.readouterr().err

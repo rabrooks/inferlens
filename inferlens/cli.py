@@ -52,6 +52,28 @@ def _cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_record(args: argparse.Namespace) -> int:
+    # argparse.REMAINDER keeps the leading "--" separator in the list.
+    command = list(args.engine_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        print(
+            "error: no command to record; usage: "
+            "inferlens record -o trace.ilens.gz -- vllm serve <model> ...",
+            file=sys.stderr,
+        )
+        return 2
+    from inferlens.record import run_record
+
+    return run_record(
+        args.output,
+        command,
+        kv_events=not args.no_kv_events,
+        keep_parts=args.keep_parts,
+    )
+
+
 def _cmd_not_implemented(command: str) -> int:
     print(f"inferlens {command} is not implemented yet", file=sys.stderr)
     return 2
@@ -66,8 +88,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_record = sub.add_parser("record", help="record a trace from a running engine")
-    p_record.add_argument("-o", "--output", help="trace file to write")
+    p_record = sub.add_parser(
+        "record",
+        help="run an engine-serving command with trace collectors attached",
+        description=(
+            "Wrap an engine-serving command (e.g. `vllm serve <model>`) so its "
+            "scheduler stats and KV-cache events are recorded; when the engine "
+            "exits (Ctrl-C / SIGTERM), the per-source streams are merged into "
+            "one trace file."
+        ),
+    )
+    p_record.add_argument(
+        "-o", "--output", required=True, help="trace file to write (.ilens[.gz])"
+    )
+    p_record.add_argument(
+        "--no-kv-events",
+        action="store_true",
+        help="do not enable/subscribe to the engine's KV-cache event stream",
+    )
+    p_record.add_argument(
+        "--keep-parts",
+        action="store_true",
+        help="keep the per-source part files next to the output (debugging)",
+    )
+    # dest is "engine_command", not "command": the subparser already claims
+    # args.command for the subcommand name.
+    p_record.add_argument(
+        "engine_command",
+        nargs=argparse.REMAINDER,
+        metavar="-- command ...",
+        help="the engine-serving command to run",
+    )
 
     p_view = sub.add_parser("view", help="open a trace in the local viewer")
     p_view.add_argument("trace", nargs="?", help="trace file to open")
@@ -78,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "info":
         return _cmd_info(args)
+    if args.command == "record":
+        return _cmd_record(args)
     return _cmd_not_implemented(args.command)
 
 
