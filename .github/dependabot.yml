@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Keep pinned GitHub Actions current (pairs with SHA-pinning in workflows).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "[CI]"
+
+  # Python dependencies, resolved via uv's lockfile.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "[Misc]"
