@@ -150,15 +150,18 @@ class CollectorGap:
     last_seq: int | None = None
 
 
-TraceEvent = (
-    TraceMeta
-    | EngineSnapshot
+# Every kind except TraceMeta carries a monotonic `ts` (see the spec's
+# Envelope section) — the property merge logic relies on.
+TimedEvent = (
+    EngineSnapshot
     | RequestFinished
     | KVBlockStored
     | KVBlockRemoved
     | KVCacheCleared
     | CollectorGap
 )
+
+TraceEvent = TraceMeta | TimedEvent
 
 EVENT_TYPES: dict[str, type[TraceEvent]] = {
     cls.KIND: cls

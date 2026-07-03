@@ -14,7 +14,13 @@ from inferlens.schema import (
     from_record,
     to_record,
 )
-from inferlens.trace_io import BufferedTraceWriter, TraceWriter, read_trace
+from inferlens.trace_io import (
+    BufferedTraceWriter,
+    TraceWriter,
+    iter_merged,
+    merge_traces,
+    read_trace,
+)
 
 META = TraceMeta(
     engine="vllm",
@@ -188,3 +194,138 @@ def test_buffered_trace_writer_drops_past_maxsize(tmp_path):
     assert writer.dropped > 0
     events = list(read_trace(path))
     assert 0 < len(events) < 1000
+
+
+# --- multi-source merge ------------------------------------------------------
+
+
+def _snapshot(ts):
+    return EngineSnapshot(
+        ts=ts, num_running_reqs=1, num_waiting_reqs=0, kv_cache_usage=0.1
+    )
+
+
+def _write(path, events):
+    with TraceWriter(path) as writer:
+        for event in events:
+            writer.write(event)
+
+
+def test_merge_rebases_secondary_onto_primary_clock(tmp_path):
+    # Both sources anchor to the same wall instant (1000.0), but their
+    # monotonic clocks read 50.0 and 7.0 there: an event 2s into the
+    # recording has ts=52.0 in the primary and ts=9.0 in the secondary,
+    # and must land at ts=52.0 (primary clock) after the merge.
+    primary_meta = TraceMeta(
+        engine="vllm",
+        engine_version="1.0",
+        model="m",
+        wall_time_unix=1000.0,
+        monotonic_time=50.0,
+    )
+    secondary_meta = TraceMeta(
+        engine="vllm",
+        engine_version="",
+        model="",
+        wall_time_unix=1000.0,
+        monotonic_time=7.0,
+        extra={"source": "vllm_kv_events"},
+    )
+    primary_path = tmp_path / "stats.ilens"
+    secondary_path = tmp_path / "kv.ilens"
+    _write(primary_path, [primary_meta, _snapshot(51.0), _snapshot(53.0)])
+    _write(secondary_path, [secondary_meta, _snapshot(9.0)])
+
+    merged = list(iter_merged([primary_path, secondary_path]))
+
+    meta, *events = merged
+    assert isinstance(meta, TraceMeta)
+    assert meta.engine_version == "1.0"  # the primary's identity wins
+    assert [e.ts for e in events] == [51.0, 52.0, 53.0]
+    # Anchor unchanged: primary events keep their exact original ts.
+    assert (meta.wall_time_unix, meta.monotonic_time) == (1000.0, 50.0)
+
+
+def test_merge_preserves_source_metas_as_provenance(tmp_path):
+    primary_meta = TraceMeta(
+        engine="vllm",
+        engine_version="1.0",
+        model="m",
+        wall_time_unix=1000.0,
+        monotonic_time=0.0,
+    )
+    secondary_meta = TraceMeta(
+        engine="vllm",
+        engine_version="",
+        model="",
+        wall_time_unix=1000.0,
+        monotonic_time=0.0,
+        extra={"kv_ts_source": "subscriber_receive"},
+    )
+    _write(tmp_path / "a.ilens", [primary_meta])
+    _write(tmp_path / "b.ilens", [secondary_meta])
+
+    [meta] = list(iter_merged([tmp_path / "a.ilens", tmp_path / "b.ilens"]))
+
+    sources = meta.extra["merged_sources"]
+    assert len(sources) == 2
+    assert sources[0]["engine_version"] == "1.0"
+    assert sources[1]["extra"]["kv_ts_source"] == "subscriber_receive"
+    # No secondary trace_meta may leak into the merged stream itself.
+
+
+def test_merge_traces_writes_readable_single_file(tmp_path):
+    meta_a = TraceMeta(
+        engine="vllm",
+        engine_version="1.0",
+        model="m",
+        wall_time_unix=1000.0,
+        monotonic_time=0.0,
+    )
+    meta_b = TraceMeta(
+        engine="vllm",
+        engine_version="",
+        model="",
+        wall_time_unix=1001.0,
+        monotonic_time=0.0,
+    )
+    _write(tmp_path / "a.ilens", [meta_a, _snapshot(0.5)])
+    _write(tmp_path / "b.ilens", [meta_b, _snapshot(0.5)])  # wall = 1001.5
+    output = tmp_path / "merged.ilens.gz"
+
+    merge_traces([tmp_path / "a.ilens", tmp_path / "b.ilens"], output)
+
+    meta, *events = list(read_trace(output))
+    assert isinstance(meta, TraceMeta)
+    assert sum(isinstance(e, TraceMeta) for e in events) == 0
+    assert [e.ts for e in events] == [0.5, 1.5]  # b rebased onto a's clock
+
+
+def test_merge_is_stable_for_equal_timestamps(tmp_path):
+    # heapq.merge must keep earlier-listed sources first on ties, so
+    # within-source arrival order survives the merge deterministically.
+    meta = TraceMeta(
+        engine="vllm",
+        engine_version="1.0",
+        model="m",
+        wall_time_unix=1000.0,
+        monotonic_time=0.0,
+    )
+    _write(tmp_path / "a.ilens", [meta, _snapshot(1.0)])
+    _write(tmp_path / "b.ilens", [meta, _snapshot(1.0)])
+
+    _, first, second = list(iter_merged([tmp_path / "a.ilens", tmp_path / "b.ilens"]))
+    assert first.ts == second.ts == 1.0
+
+
+def test_merge_rejects_stream_without_anchor(tmp_path):
+    _write(tmp_path / "a.ilens", [META])
+    _write(tmp_path / "no-anchor.ilens", [_snapshot(1.0)])
+
+    with pytest.raises(ValueError, match="no trace_meta anchor"):
+        list(iter_merged([tmp_path / "a.ilens", tmp_path / "no-anchor.ilens"]))
+
+
+def test_merge_rejects_empty_input_list():
+    with pytest.raises(ValueError, match="no trace streams"):
+        list(iter_merged([]))

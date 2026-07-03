@@ -84,6 +84,28 @@ collectors. A recorder MAY deliver the merged result as a single trace file;
 the merge is defined entirely by the per-source `trace_meta` anchors above, so
 it can equally happen at record time or lazily on read.
 
+A **merged file** must itself be a valid single-source trace:
+
+- It carries exactly one `trace_meta` — the *primary* source's (for a vLLM
+  recording, the stat logger's, which has the richest identity). Every
+  other source's `ts` values are rebased onto the primary's monotonic
+  clock through the wall anchors:
+  `ts' = ts + (anchor_wall − anchor_mono) − (primary_wall − primary_mono)`
+  (an identity for the primary's own events).
+- Secondary `trace_meta` records MUST NOT appear in the merged stream —
+  their anchors would misdescribe the rebased `ts` values around them.
+  Instead the original per-source `trace_meta` records are preserved
+  verbatim in the merged meta's `extra.merged_sources` (a list, in merge
+  order, primary first) as provenance.
+- Per-source metadata rides in each source's `trace_meta.extra` and
+  survives in that provenance list — e.g. the KV subscriber stamps
+  `extra.source = "vllm_kv_events"` and
+  `extra.kv_ts_source = "subscriber_receive"` (which clock produced its
+  `ts` values; see the Clock model note on `kv_*` placement).
+- `kv_*` events' `seq` and `wall_time_unix` are never rewritten.
+
+The reference implementation is `trace_io.iter_merged` / `merge_traces`.
+
 ## Event kinds
 
 ### Implemented (schema v0.3)

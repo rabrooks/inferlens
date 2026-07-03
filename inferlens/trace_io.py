@@ -10,18 +10,21 @@ unreadable).
 from __future__ import annotations
 
 import gzip
+import heapq
 import json
 import logging
 import queue
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Any, Literal, Protocol
 
 from inferlens.schema import (
     SCHEMA_VERSION,
+    TimedEvent,
     TraceEvent,
     TraceMeta,
     from_record,
@@ -225,6 +228,85 @@ def read_trace(path: str | Path) -> Iterator[TraceEvent]:
             # A gzip stream cut off mid-write (crashed recorder): everything
             # decompressed so far has already been yielded.
             return
+
+
+def iter_merged(paths: Sequence[str | Path]) -> Iterator[TraceEvent]:
+    """Merge per-source trace streams into one self-consistent stream.
+
+    Implements the record-time merge defined in ``docs/TRACE_SPEC.md``
+    "Multi-source recording". The first path is the *primary* source: its
+    ``trace_meta`` — identity and clock anchor — becomes the merged
+    stream's, and every other source's ``ts`` values are rebased onto the
+    primary's monotonic clock through the two streams' wall anchors
+    (``ts' = ts + (anchor_wall - anchor_mono) - (primary_wall -
+    primary_mono)``; an identity for the primary's own events). Secondary
+    ``trace_meta`` records are not re-emitted — their anchors would
+    misdescribe the rebased ``ts`` values around them — but are preserved
+    verbatim in the merged meta's ``extra["merged_sources"]``.
+
+    Inputs must be ``ts``-ordered, which streams produced by this module's
+    writers are by construction.
+
+    Raises:
+        ValueError: If ``paths`` is empty, or an input stream contains no
+            ``trace_meta`` anchor (such a stream is not mergeable — see the
+            spec).
+    """
+    if not paths:
+        raise ValueError("no trace streams to merge")
+    anchored = [_read_to_anchor(Path(path)) for path in paths]
+    primary = anchored[0][0]
+    yield replace(
+        primary,
+        extra={
+            **primary.extra,
+            "merged_sources": [to_record(meta) for meta, _ in anchored],
+        },
+    )
+    primary_offset = primary.wall_time_unix - primary.monotonic_time
+    streams = [
+        _rebased(events, meta.wall_time_unix - meta.monotonic_time - primary_offset)
+        for meta, events in anchored
+    ]
+    yield from heapq.merge(*streams, key=lambda event: event.ts)
+
+
+def merge_traces(paths: Sequence[str | Path], output: str | Path) -> None:
+    """Merge per-source trace files into a single trace file.
+
+    See :func:`iter_merged` for the merge semantics.
+    """
+    with TraceWriter(output) as writer:
+        for event in iter_merged(paths):
+            writer.write(event)
+
+
+def _read_to_anchor(path: Path) -> tuple[TraceMeta, Iterator[TraceEvent]]:
+    """Consume a stream up to its clock anchor; return (anchor, remainder)."""
+    events = read_trace(path)
+    for dropped, event in enumerate(events):
+        if isinstance(event, TraceMeta):
+            if dropped:
+                _logger.warning(
+                    "%s: dropped %d events preceding the trace_meta anchor "
+                    "(unanchored ts values cannot be merged)",
+                    path,
+                    dropped,
+                )
+            return event, events
+    raise ValueError(f"{path}: no trace_meta anchor; stream is not mergeable")
+
+
+def _rebased(events: Iterator[TraceEvent], offset_s: float) -> Iterator[TimedEvent]:
+    for event in events:
+        if isinstance(event, TraceMeta):
+            # A mid-stream re-anchor isn't part of the format (yet); its
+            # events were anchored by the first meta, so just drop it.
+            _logger.warning("ignoring extra mid-stream trace_meta during merge")
+            continue
+        # Events come fresh off read_trace, so in-place rebasing is safe.
+        event.ts += offset_s
+        yield event
 
 
 def _check_schema_major(version: str, path: str | Path) -> None:
