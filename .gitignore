@@ -21,6 +21,7 @@ node_modules/
 # Personal planning artifacts — never part of the public repo
 PLAN.md
 CLAUDE.local.md
+HANDOFF.md
 
 # OS / editor
 .DS_Store
