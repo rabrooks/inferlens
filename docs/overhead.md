@@ -35,7 +35,7 @@ Per run (workload-reported throughput and latency; vLLM's own average
 generation throughput in the last column):
 
 | Run | tag | ok | throughput (req/s) | p50 (s) | p95 (s) | avg gen (tok/s) |
-|----|----|----|----|----|----|----|
+| --- | --- | --- | --- | --- | --- | --- |
 | 1 | baseline | 1532 | 10.213 | 0.59 | 0.62 | 1466.8¹ |
 | 1 | recorded | 1533 | 10.220 | 0.59 | 0.62 | 1580.5 |
 | 2 | baseline | 1533 | 10.220 | 0.59 | 0.61 | 1594.3 |
@@ -46,7 +46,7 @@ generation throughput in the last column):
 ¹ First baseline run reflects cold-start; excluded from the average below.
 
 | Metric | Baseline | Recorded | Delta |
-|----|----|----|----|
+| --- | --- | --- | --- |
 | Throughput (req/s) | 10.220 | 10.215 | **−0.05%** |
 | Latency p50 (s) | 0.59 | 0.59 | **0.0%** |
 | Latency p95 (s) | 0.613 | 0.620 | +0.007 s (~1%) |
