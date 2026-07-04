@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/*
+ * InferLens design tokens.
+ *
+ * Every color is defined once with light-dark(); the theme toggle sets
+ * `color-scheme` via data-theme on <html>, so both CSS and canvas code
+ * (via getComputedStyle) always see the resolved value for the active theme.
+ *
+ * Data colors are semantic — they follow the *entity*, not the chart:
+ * the same hue means the same thing in the timeline, the Gantt, and the
+ * KV panel. The palette is CVD-validated per chart in both modes; see
+ * viewer/DESIGN.md before adding or reassigning a color.
+ */
+
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root {
+  /* Chrome */
+  --il-page: light-dark(#f9f9f7, #0d0d0d);
+  --il-surface: light-dark(#fcfcfb, #1a1a19);
+  --il-ink: light-dark(#0b0b0b, #ffffff);
+  --il-ink-secondary: light-dark(#52514e, #c3c2b7);
+  --il-ink-muted: #898781;
+  --il-grid: light-dark(#e1e0d9, #2c2c2a);
+  --il-axis: light-dark(#c3c2b7, #383835);
+  --il-border: light-dark(rgb(11 11 11 / 0.1), rgb(255 255 255 / 0.1));
+
+  /* Data series — entity-semantic, CVD-validated as chart sets */
+  --il-running: light-dark(#2a78d6, #3987e5); /* running requests / decode work */
+  --il-waiting: light-dark(#eda100, #c98500); /* waiting queue / dead time */
+  --il-kv: light-dark(#1baf7a, #199e70); /* KV-cache usage AND evictions */
+  --il-preempt: light-dark(#e34948, #e66767); /* preemption events */
+  --il-cachehit: light-dark(#008300, #008300); /* prefix-cache hit rate */
+
+  /* Request phases — ordinal blue ramp (recessive → salient per surface) */
+  --il-phase-queued: light-dark(#86b6ef, #184f95);
+  --il-phase-prefill: #3987e5;
+  --il-phase-decode: light-dark(#184f95, #86b6ef);
+
+  /* Status — fixed scale, reserved meaning, never used as a series color.
+   * Always paired with an icon or label. */
+  --il-status-good: #0ca30c;
+  --il-status-warning: #fab219; /* collector_gap regions */
+  --il-status-serious: #ec835a;
+  --il-status-critical: #d03b3b; /* KV saturation (usage = 1.0) */
+}
+
+@theme inline {
+  --color-page: var(--il-page);
+  --color-surface: var(--il-surface);
+  --color-ink: var(--il-ink);
+  --color-ink-secondary: var(--il-ink-secondary);
+  --color-ink-muted: var(--il-ink-muted);
+  --color-grid: var(--il-grid);
+  --color-axis: var(--il-axis);
+  --color-edge: var(--il-border);
+
+  --color-running: var(--il-running);
+  --color-waiting: var(--il-waiting);
+  --color-kv: var(--il-kv);
+  --color-preempt: var(--il-preempt);
+  --color-cachehit: var(--il-cachehit);
+  --color-phase-queued: var(--il-phase-queued);
+  --color-phase-prefill: var(--il-phase-prefill);
+  --color-phase-decode: var(--il-phase-decode);
+  --color-status-good: var(--il-status-good);
+  --color-status-warning: var(--il-status-warning);
+  --color-status-serious: var(--il-status-serious);
+  --color-status-critical: var(--il-status-critical);
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono",
+    Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--il-page);
+  color: var(--il-ink);
+}
+
+/* Numerals in data contexts must align vertically. */
+.font-data {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
