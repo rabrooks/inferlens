@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { loadTrace } from './trace/load'
 import type { Trace } from './trace/types'
+import { EngineTimeline } from './timeline/EngineTimeline'
 
 type ThemeChoice = 'system' | 'light' | 'dark'
 
@@ -39,6 +40,24 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  // ?trace=<url> preloads a trace (used by `inferlens view` and hosted demos).
+  // The response is only ever parsed as trace data, never executed.
+  useEffect(() => {
+    const url = new URLSearchParams(window.location.search).get('trace')
+    if (!url) return
+    void (async () => {
+      try {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`)
+        const name = decodeURIComponent(new URL(url, window.location.href).pathname.split('/').pop() || 'trace')
+        await open(new File([await res.blob()], name))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on load
+  }, [])
 
   async function open(file: File) {
     setBusy(true)
@@ -114,7 +133,7 @@ export default function App() {
         ) : (
           <>
             <TraceSummary trace={loaded.trace} />
-            <TrackPlaceholder title="Engine timeline" />
+            <EngineTimeline trace={loaded.trace} />
             <TrackPlaceholder title="Requests" />
             <TrackPlaceholder title="KV / prefix cache" />
           </>

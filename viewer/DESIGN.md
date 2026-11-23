@@ -81,3 +81,32 @@ the check is per *rendered combination*, not per palette.
 - The signature interaction is the **shared time cursor**: one crosshair
   spanning every track, so cause (KV saturation, preemption ticks) and
   effect (queue growth, stalled Gantt bars) line up under your pointer.
+
+## Engine timeline
+
+Stacked lanes on one shared time axis, each with its own y-scale (never two
+scales on one plot):
+
+| Lane | Marks | Scale |
+| --- | --- | --- |
+| Requests | running (blue) and waiting (yellow): 2px line over a 10% wash | shared count axis |
+| KV cache usage | aqua line + wash; a 3px critical strip on top where usage ≥ 95% | fixed 0–100% |
+| Preemptions | red 2px ticks per 3px column group | per second |
+| KV evictions | aqua bars, 6px + 2px surface gap, 2px rounded top | blocks per second |
+
+- **Levels show the peak per pixel column** and carry forward through
+  columns with no snapshot (engine state persists between snapshots). A
+  mean would hide a one-step spike.
+- **Events are per-second rates**, so bar and tick heights don't change
+  with zoom.
+- **Incident windows are an ink wash** (`--il-ink` at 5%, 8% in the label
+  row), not a new hue: they annotate time ranges and must stay recessive
+  under the data. They come from the same rules as `inferlens explain`
+  (`src/analysis/incidents.ts` mirrors `inferlens/analysis.py`; a test
+  cross-checks the two on the real fixture).
+- **Collector gaps** are 2px warning-color rules across every lane with a
+  ⚠ in the label row, and the tooltip says data is missing there.
+- **Table view** (per-second bins) is the tooltip-free twin of the chart.
+- Interaction: scroll zooms around the pointer, drag pans, double-click
+  resets; with the timeline focused, arrow keys pan, `+`/`-` zoom, `0`
+  resets.
