@@ -110,3 +110,31 @@ scales on one plot):
 - Interaction: scroll zooms around the pointer, drag pans, double-click
   resets; with the timeline focused, arrow keys pan, `+`/`-` zoom, `0`
   resets.
+
+## Request Gantt and request detail
+
+The Gantt shares the engine timeline's view and cursor (`src/timeline/view.ts`):
+zooming or panning either track moves both, and the crosshair spans both.
+
+- **One bar per finished request**, arrival → finish, packed into lanes by
+  arrival (a lane never holds two overlapping requests — the same rule as
+  `inferlens export`). Row pitch adapts to the lane count (4–14 px).
+- **Phases as reported, right-aligned to finish:** decode ends at finish,
+  prefill before it, queued before that. The unattributed remainder
+  (e2e − phases) sits at the head as a 2px gray whisker, never as a colored
+  block, and phases are never stretched to fill e2e. A 1px surface gap
+  separates phases wide enough to show it.
+- **Preempted requests** (traces that record per-request counts) carry a
+  2px preemption-red tick at arrival — a tick, as on the timeline.
+- **Selection** dims every other bar to ~30% and rings the selected one in
+  ink; the timeline brackets its arrival and finish across every lane, so
+  its queue time lines up with the KV saturation and preemptions that
+  caused it. Hover rings in secondary ink. Escape or ✕ clears.
+- **Request detail** (sidebar) is the UI twin of
+  `inferlens explain --request ID`: same numbers, same rules
+  (`src/analysis/requests.ts` mirrors `inferlens/analysis.py`; a test
+  cross-checks every request on the real fixture). Its part-to-whole is a
+  tall segmented bar in time order; labels inside fills are near-black or
+  white by the fill's luminance *per theme* (the ramp flips ends).
+- **Request table** (sortable, searchable by id) is the Gantt's
+  tooltip-free twin and the keyboard path to selection.

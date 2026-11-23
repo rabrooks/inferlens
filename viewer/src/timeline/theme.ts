@@ -20,6 +20,9 @@ const TOKENS = [
   'waiting',
   'kv',
   'preempt',
+  'phase-queued',
+  'phase-prefill',
+  'phase-decode',
   'status-warning',
   'status-critical',
 ] as const

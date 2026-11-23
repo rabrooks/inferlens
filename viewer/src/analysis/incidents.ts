@@ -7,8 +7,8 @@
  * here must match the Python constants; `incidents.test.ts` cross-checks
  * them on the real fixture when it is present.
  *
- * Only what the overlay needs is ported (bins, windows, kind); latency
- * attribution stays in Python.
+ * Only what the overlay needs is ported (bins, windows, kind); per-request
+ * attribution is ported separately in `requests.ts`.
  */
 import type { Trace } from '../trace/types'
 

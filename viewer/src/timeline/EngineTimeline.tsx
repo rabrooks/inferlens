@@ -8,20 +8,19 @@
  * reserved warning color. Encoding rules and obligations: viewer/DESIGN.md.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { binTrace, DEFAULT_BIN_S, findIncidents, KV_SATURATED, type Incident } from '../analysis/incidents'
+import { DEFAULT_BIN_S, KV_SATURATED, type Bin, type Incident } from '../analysis/incidents'
+import type { RequestAttr } from '../analysis/requests'
 import type { Trace } from '../trace/types'
 import { columns, niceScale, prepare, rates, stateAt, type Columns } from './series'
 import { rgba, usePalette, type Palette } from './theme'
+import { DATA_FONT, timeAxis } from './draw'
+import { GUTTER, RIGHT, usePanZoom, xOf, type TimeView, type View } from './view'
 
-const GUTTER = 156
-const RIGHT = 12
 const INCIDENT_ROW = 22
 const LANE_GAP = 18
 const AXIS = 26
 const TICK_GROUP_PX = 3
 const BAR_PX = 8 // 6px bar + 2px surface gap
-const MIN_VIEW_S = 0.5
 const TOOLTIP_W = 248
 
 interface Lane {
@@ -49,30 +48,31 @@ function laneTops(): number[] {
 const TOPS = laneTops()
 const HEIGHT = TOPS.at(-1)! + LANES.at(-1)!.height + AXIS
 
-interface View {
-  t0: number
-  t1: number
-}
-
-export function EngineTimeline({ trace }: { trace: Trace }) {
+export function EngineTimeline({
+  trace,
+  bins,
+  incidents,
+  tv,
+  selected,
+}: {
+  trace: Trace
+  bins: Bin[]
+  incidents: Incident[]
+  tv: TimeView
+  /** The selected request, bracketed on every lane. */
+  selected: RequestAttr | null
+}) {
   const data = useMemo(() => prepare(trace), [trace])
-  const bins = useMemo(() => binTrace(trace), [trace])
-  const incidents = useMemo(() => findIncidents(bins), [bins])
   const gaps = useMemo(
     () => trace.gaps.map((g) => g.t - trace.start),
     [trace],
   )
-  const full: View = useMemo(() => ({ t0: 0, t1: Math.max(data.span, MIN_VIEW_S) }), [data])
-  const [view, setView] = useState<View>(full)
+  const { view, full, setView, hoverT } = tv
   const [width, setWidth] = useState(0)
-  const [hoverX, setHoverX] = useState<number | null>(null)
   const [showTable, setShowTable] = useState(false)
   const palette = usePalette()
   const wrap = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
-  const drag = useRef<{ x: number; view: View } | null>(null)
-
-  useEffect(() => setView(full), [full])
 
   useEffect(() => {
     const el = wrap.current
@@ -87,7 +87,10 @@ export function EngineTimeline({ trace }: { trace: Trace }) {
     () => (plotW > 0 ? columns(data, view.t0, view.t1, plotW) : null),
     [data, view, plotW],
   )
-  const tOf = (x: number) => view.t0 + ((x - GUTTER) / plotW) * (view.t1 - view.t0)
+  const span = useMemo(
+    () => (selected ? ([selected.arrivalS, selected.finishS] as const) : null),
+    [selected],
+  )
 
   useEffect(() => {
     const c = canvas.current
@@ -98,51 +101,12 @@ export function EngineTimeline({ trace }: { trace: Trace }) {
     const ctx = c.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    draw(ctx, { width, plotW, view, cols, palette, incidents, gaps })
-  }, [cols, palette, width, plotW, view, incidents, gaps])
+    draw(ctx, { width, plotW, view, cols, palette, incidents, gaps, span })
+  }, [cols, palette, width, plotW, view, incidents, gaps, span])
 
-  // Wheel must be non-passive to stop the page scrolling while zooming.
-  useEffect(() => {
-    const el = canvas.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      const rect = el.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      if (x < GUTTER) return
-      e.preventDefault()
-      // Wheel doesn't fire pointermove; keep the crosshair under the pointer.
-      setHoverX(x <= GUTTER + plotW ? x : null)
-      setView((v) => zoom(v, full, v.t0 + ((x - GUTTER) / plotW) * (v.t1 - v.t0), Math.exp(e.deltaY * 0.002)))
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [full, plotW])
+  const pz = usePanZoom(canvas, plotW, tv)
 
-  const localX = (e: ReactPointerEvent) => e.clientX - e.currentTarget.getBoundingClientRect().left
-
-  function onPointerMove(e: ReactPointerEvent<HTMLCanvasElement>) {
-    const x = localX(e)
-    if (drag.current) {
-      const dt = ((drag.current.x - x) / plotW) * (drag.current.view.t1 - drag.current.view.t0)
-      setView(clamp({ t0: drag.current.view.t0 + dt, t1: drag.current.view.t1 + dt }, full))
-    }
-    setHoverX(x >= GUTTER && x <= GUTTER + plotW ? x : null)
-  }
-
-  function onKeyDown(e: KeyboardEvent) {
-    const span = view.t1 - view.t0
-    const mid = (view.t0 + view.t1) / 2
-    const pan = (d: number) => setView(clamp({ t0: view.t0 + d, t1: view.t1 + d }, full))
-    if (e.key === 'ArrowLeft') pan(-span * 0.1)
-    else if (e.key === 'ArrowRight') pan(span * 0.1)
-    else if (e.key === '+' || e.key === '=') setView(zoom(view, full, mid, 0.8))
-    else if (e.key === '-') setView(zoom(view, full, mid, 1.25))
-    else if (e.key === '0') setView(full)
-    else return
-    e.preventDefault()
-  }
-
-  const hoverT = hoverX === null ? null : tOf(hoverX)
+  const hoverX = hoverT === null || plotW <= 0 ? null : xOf(hoverT, view, plotW)
   const zoomed = view.t0 > 0 || view.t1 < full.t1
 
   return (
@@ -179,27 +143,15 @@ export function EngineTimeline({ trace }: { trace: Trace }) {
         ref={wrap}
         className="relative outline-none focus-visible:ring-1 focus-visible:ring-axis"
         tabIndex={0}
-        onKeyDown={onKeyDown}
+        onKeyDown={pz.onKeyDown}
         aria-label="Engine timeline. Arrow keys pan, plus and minus zoom, 0 resets."
       >
         <canvas
           ref={canvas}
           role="img"
           aria-label={summary(incidents, data.span)}
-          style={{ width: '100%', height: HEIGHT, display: 'block', cursor: drag.current ? 'grabbing' : 'crosshair' }}
-          onPointerMove={onPointerMove}
-          onPointerLeave={() => {
-            setHoverX(null)
-            drag.current = null
-          }}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId)
-            drag.current = { x: localX(e), view }
-          }}
-          onPointerUp={() => {
-            drag.current = null
-          }}
-          onDoubleClick={() => setView(full)}
+          style={{ width: '100%', height: HEIGHT, display: 'block', cursor: pz.dragging ? 'grabbing' : 'crosshair' }}
+          {...pz.handlers}
         />
         <LaneLabels />
         {hoverX !== null && hoverT !== null && (
@@ -210,6 +162,7 @@ export function EngineTimeline({ trace }: { trace: Trace }) {
             data={data}
             bins={bins}
             incidents={incidents}
+            selected={selected}
             gapNear={gaps.some((g) => Math.abs(g - hoverT) <= (view.t1 - view.t0) / plotW * 3)}
           />
         )}
@@ -217,18 +170,6 @@ export function EngineTimeline({ trace }: { trace: Trace }) {
       {showTable && <BinTable bins={bins} incidents={incidents} />}
     </section>
   )
-}
-
-function clamp(v: View, full: View): View {
-  const span = Math.min(v.t1 - v.t0, full.t1 - full.t0)
-  const t0 = Math.min(Math.max(v.t0, full.t0), full.t1 - span)
-  return { t0, t1: t0 + span }
-}
-
-function zoom(v: View, full: View, at: number, factor: number): View {
-  const span = Math.min(Math.max((v.t1 - v.t0) * factor, MIN_VIEW_S), full.t1 - full.t0)
-  const frac = (at - v.t0) / (v.t1 - v.t0)
-  return clamp({ t0: at - frac * span, t1: at - frac * span + span }, full)
 }
 
 function summary(incidents: Incident[], span: number): string {
@@ -254,9 +195,9 @@ interface DrawArgs {
   palette: Palette
   incidents: Incident[]
   gaps: number[]
+  span: readonly [number, number] | null
 }
 
-const DATA_FONT = '10px ui-monospace, SFMono-Regular, Menlo, monospace'
 
 function draw(ctx: CanvasRenderingContext2D, a: DrawArgs) {
   const { width, plotW, view, cols, palette: p } = a
@@ -297,6 +238,16 @@ function draw(ctx: CanvasRenderingContext2D, a: DrawArgs) {
     ctx.fillRect(gx - 1, lanesTop - 4, 2, lanesBottom - lanesTop + 8)
     ctx.fillStyle = rgba(p.ink)
     ctx.fillText('⚠', gx + 3, 3 + (INCIDENT_ROW - 8) / 2)
+  }
+
+  // Selected request: ink brackets at arrival and finish across every lane,
+  // so its queue/decode time lines up with the engine state that caused it.
+  if (a.span) {
+    const [s0, s1] = a.span.map(x)
+    ctx.fillStyle = rgba(p.ink, 0.04)
+    ctx.fillRect(s0, lanesTop - 4, s1 - s0, lanesBottom - lanesTop + 8)
+    ctx.fillStyle = rgba(p['ink-secondary'])
+    for (const sx of [s0, s1]) ctx.fillRect(Math.round(sx) - 0.5, 0, 1, lanesBottom + 4)
   }
   ctx.restore()
 
@@ -342,7 +293,7 @@ function draw(ctx: CanvasRenderingContext2D, a: DrawArgs) {
     }
   })
 
-  timeAxis(ctx, p, view, plotW, lanesBottom)
+  timeAxis(ctx, p, view, plotW, TOPS[0], lanesBottom)
 }
 
 function maxOf(a: Float64Array): number {
@@ -431,28 +382,6 @@ function roundTop(ctx: CanvasRenderingContext2D, x: number, y: number, w: number
   ctx.fill()
 }
 
-function timeAxis(ctx: CanvasRenderingContext2D, p: Palette, view: View, plotW: number, bottom: number) {
-  const span = view.t1 - view.t0
-  const { step } = niceScale(span, Math.max(2, Math.floor(plotW / 110)))
-  ctx.font = DATA_FONT
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'top'
-  const first = Math.ceil(view.t0 / step) * step
-  for (let t = first; t <= view.t1 + 1e-9; t += step) {
-    const x = Math.round(GUTTER + ((t - view.t0) / span) * plotW) + 0.5
-    ctx.strokeStyle = rgba(p.grid)
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(x, TOPS[0])
-    ctx.lineTo(x, bottom)
-    ctx.stroke()
-    ctx.fillStyle = rgba(p['ink-muted'])
-    const digits = step < 1 ? Math.min(3, Math.ceil(-Math.log10(step))) : 0
-    ctx.fillText(`${t.toFixed(digits)} s`, x, bottom + 8)
-  }
-  ctx.textAlign = 'left'
-}
-
 // --- DOM overlays ----------------------------------------------------------
 
 function LaneLabels() {
@@ -498,14 +427,16 @@ function Cursor({
   data,
   bins,
   incidents,
+  selected,
   gapNear,
 }: {
   x: number
   t: number
   width: number
   data: ReturnType<typeof prepare>
-  bins: ReturnType<typeof binTrace>
+  bins: Bin[]
   incidents: Incident[]
+  selected: RequestAttr | null
   gapNear: boolean
 }) {
   const state = stateAt(data, t)
@@ -539,6 +470,11 @@ function Cursor({
             Incident #{inc.id} · {kindLabel(inc)} · {inc.preemptions} preemptions
           </div>
         )}
+        {selected && t >= selected.arrivalS && t <= selected.finishS && (
+          <div className="mt-1 border-t border-grid pt-1 text-xs text-ink-secondary">
+            inside selected request ({(t - selected.arrivalS).toFixed(2)} s after arrival)
+          </div>
+        )}
         {gapNear && (
           <div className="mt-1 text-xs text-ink-secondary">
             <span className="text-status-warning">⚠</span> collector gap: some events missing here
@@ -561,7 +497,7 @@ function Row({ value, label, color }: { value: string; label: string; color: str
   )
 }
 
-function BinTable({ bins, incidents }: { bins: ReturnType<typeof binTrace>; incidents: Incident[] }) {
+function BinTable({ bins, incidents }: { bins: Bin[]; incidents: Incident[] }) {
   const incidentAt = (t: number) => incidents.find((i) => t >= i.startS && t < i.endS)
   return (
     <div className="max-h-72 overflow-y-auto border-t border-grid">

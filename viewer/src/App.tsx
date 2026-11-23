@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { binTrace, findIncidents } from './analysis/incidents'
+import { analyzeRequests, type RequestAttr } from './analysis/requests'
+import { RequestGantt } from './gantt/RequestGantt'
+import { RequestPanel } from './gantt/RequestPanel'
 import { loadTrace } from './trace/load'
 import type { Trace } from './trace/types'
 import { EngineTimeline } from './timeline/EngineTimeline'
+import { frame, MIN_VIEW_S, type TimeView, type View } from './timeline/view'
 
 type ThemeChoice = 'system' | 'light' | 'dark'
 
@@ -131,12 +136,7 @@ export default function App() {
             </p>
           </button>
         ) : (
-          <>
-            <TraceSummary trace={loaded.trace} />
-            <EngineTimeline trace={loaded.trace} />
-            <TrackPlaceholder title="Requests" />
-            <TrackPlaceholder title="KV / prefix cache" />
-          </>
+          <TraceView key={loaded.name + loaded.trace.start} trace={loaded.trace} />
         )}
         <input
           ref={fileInput}
@@ -198,6 +198,56 @@ function TraceSummary({ trace }: { trace: Trace }) {
         </p>
       )}
     </section>
+  )
+}
+
+/**
+ * Everything for one loaded trace. Owns the shared time view, cursor, and
+ * request selection, so every track zooms, pans, and points together.
+ */
+function TraceView({ trace }: { trace: Trace }) {
+  const bins = useMemo(() => binTrace(trace), [trace])
+  const incidents = useMemo(() => findIncidents(bins), [bins])
+  const requests = useMemo(() => analyzeRequests(trace, incidents), [trace, incidents])
+  const full: View = useMemo(
+    () => ({ t0: 0, t1: Math.max(trace.end - trace.start, MIN_VIEW_S) }),
+    [trace],
+  )
+  const [view, setView] = useState<View>(full)
+  const [hoverT, setHoverT] = useState<number | null>(null)
+  const [selected, setSelected] = useState<RequestAttr | null>(null)
+  const tv: TimeView = useMemo(
+    () => ({ view, full, setView, hoverT, setHoverT }),
+    [view, full, hoverT],
+  )
+  const onFrame = useCallback((t0: number, t1: number) => setView(frame(t0, t1, full)), [full])
+
+  return (
+    <>
+      <TraceSummary trace={trace} />
+      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_25rem]">
+        <div className="flex min-w-0 flex-col gap-2">
+          <EngineTimeline trace={trace} bins={bins} incidents={incidents} tv={tv} selected={selected} />
+          <RequestGantt
+            analysis={requests}
+            incidents={incidents}
+            tv={tv}
+            selected={selected}
+            onSelect={setSelected}
+          />
+          <TrackPlaceholder title="KV / prefix cache" />
+        </div>
+        <div className="xl:sticky xl:top-0 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto">
+          <RequestPanel
+            analysis={requests}
+            incidents={incidents}
+            selected={selected}
+            onSelect={setSelected}
+            onFrame={onFrame}
+          />
+        </div>
+      </div>
+    </>
   )
 }
 
