@@ -48,6 +48,24 @@ function gzBlobOf(text: string): Blob {
 }
 
 describe('loadTrace', () => {
+  it('reads v0.4 iteration fields and leaves them null when absent', async () => {
+    const v04 = {
+      ...SNAPSHOT,
+      ts: 511.0,
+      iterations: 1,
+      num_prefill_tokens: 512,
+      iteration_time_s: 0.012,
+      iteration_time_source: 'engine_step_wall',
+    }
+    const trace = await loadTrace(blobOf(jsonl(META, SNAPSHOT, v04)))
+    const [old, cur] = trace.snapshots
+    // Not recorded must stay null, never default to a misleading 0.
+    expect(old.iterations).toBeNull()
+    expect(old.iteration_time_source).toBeNull()
+    expect(cur.num_prefill_tokens).toBe(512)
+    expect(cur.iteration_time_source).toBe('engine_step_wall')
+  })
+
   it('parses a plain JSONL trace and places events on the wall clock', async () => {
     const trace = await loadTrace(blobOf(jsonl(META, SNAPSHOT, KV_STORED)))
     expect(trace.eventCount).toBe(3)

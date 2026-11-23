@@ -4,7 +4,14 @@ import json
 import sys
 
 from inferlens.cli import main
-from inferlens.record import KVEventsPlan, _connectable, plan_kv_events, run_record
+from inferlens.record import (
+    ITERATION_DETAILS_FLAG,
+    KVEventsPlan,
+    _connectable,
+    plan_iteration_details,
+    plan_kv_events,
+    run_record,
+)
 from inferlens.schema import EngineSnapshot, TraceMeta
 from inferlens.trace_io import read_trace
 
@@ -80,6 +87,18 @@ def test_plan_leaves_non_vllm_commands_alone():
     command, plan = plan_kv_events(list(original))
     assert command == original
     assert plan is None
+
+
+def test_plan_iteration_details_appends_flag_to_vllm_serve():
+    command = plan_iteration_details(["vllm", "serve", "m"])
+    assert command == ["vllm", "serve", "m", ITERATION_DETAILS_FLAG]
+
+
+def test_plan_iteration_details_is_idempotent_and_vllm_only():
+    already = ["vllm", "serve", "m", ITERATION_DETAILS_FLAG]
+    assert plan_iteration_details(list(already)) == already
+    other = [sys.executable, "-m", "myengine"]
+    assert plan_iteration_details(list(other)) == other
 
 
 def test_connectable_rewrites_wildcard_binds():

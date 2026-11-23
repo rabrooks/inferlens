@@ -1,4 +1,4 @@
-# InferLens Trace Format — v0.3 (DRAFT)
+# InferLens Trace Format — v0.4 (DRAFT)
 
 > **Status: draft.** Until v1.0, the format may change between releases
 > without migration support. Schema changes MUST update this document and
@@ -108,13 +108,13 @@ The reference implementation is `trace_io.iter_merged` / `merge_traces`.
 
 ## Event kinds
 
-### Implemented (schema v0.3)
+### Implemented (schema v0.4)
 
 | kind | one line | emitted by |
 | --- | --- | --- |
 | `trace_meta` | engine/model identity + clock anchor | recorder startup |
-| `engine_snapshot` | per logging step: queue depths, KV usage, prefix-cache stats, preemption count, token throughput, TTFT/ITL summaries (v0.3) | vLLM `SchedulerStats` + `IterationStats` |
-| `request_finished` | per-request lifecycle summary: queued/prefill/decode times, token counts, cached tokens, finish reason | vLLM `FinishedRequestStats` |
+| `engine_snapshot` | per logging step: queue depths, KV usage, prefix-cache stats, preemption count, token throughput, TTFT/ITL summaries (v0.3), deferred-waiting count and per-iteration prefill/decode split + iteration time (v0.4) | vLLM `SchedulerStats` + `IterationStats` |
+| `request_finished` | per-request lifecycle summary: queued/prefill/decode times, token counts, cached tokens, finish reason, preemption count (v0.4) | vLLM `FinishedRequestStats` |
 | `kv_block_stored` | a KV block chain was stored: block hashes, token count (not token content), block size, cache medium/group | vLLM KV events (ZMQ, `--kv-events-config`), `BlockStored` |
 | `kv_block_removed` | a KV block was evicted: block hashes, cache medium/group | vLLM KV events (ZMQ), `BlockRemoved` |
 | `kv_cache_cleared` | the whole prefix cache was reset | vLLM KV events (ZMQ), `AllBlocksCleared` |
@@ -129,6 +129,32 @@ are **engine-level distributions, not per-request values** — vLLM's
 source arrays carry no request IDs (`upstream-gaps.md` §1), so a viewer
 may draw latency bands over time from them but must never attribute them
 to individual requests.
+
+Fields added in v0.4 are all nullable, and `null` means **not recorded**
+(older engine, or the engine did not report it) — never zero. Readers
+MUST NOT treat a missing value as `0`.
+
+- `num_deferred_waiting_reqs`: waiting requests the scheduler is holding
+  back (transient constraints such as an in-flight KV transfer), counted
+  separately from `num_waiting_reqs`.
+- `iterations`, `num_prefill_reqs`, `num_prefill_tokens`,
+  `num_decode_reqs`, `num_decode_tokens`, `iteration_time_s`: the engine
+  iterations this snapshot covers (one snapshot may cover several), with
+  their scheduled prefill/decode requests and tokens and their summed
+  iteration time. Prefill counts include recomputation after preemption.
+  These are scheduled-work counts, distinct from `num_prompt_tokens` (the
+  prompt tokens of requests that finished prefill this step). Batch
+  *composition* — which request IDs ran — is still not exposed.
+- `iteration_time_source` says what `iteration_time_s` measures:
+  `engine_step_wall` (wall time around the engine step, includes
+  scheduling and host overhead) or `gpu` (device time for the forward
+  pass). They are not interchangeable; consumers deriving efficiency
+  figures MUST check it. Both are `null` unless every covered iteration
+  was timed.
+
+`request_finished.num_preemptions` (v0.4) is how many times the request
+was preempted. It is a count only: when each preemption happened, and how
+long the request then waited, are not exposed.
 
 ### `finish_reason` vocabulary
 
@@ -178,7 +204,7 @@ which policy produced it, see Multi-source recording.)
 
 | kind | one line | blocker |
 | --- | --- | --- |
-| `step_schedule` | which request IDs ran in a step, with per-request prefill/decode token split | vLLM aggregates per-iteration; no per-step composition exposed |
+| `step_schedule` | which request IDs ran in a step, with per-request prefill/decode token split | vLLM exposes per-iteration totals only (recorded on `engine_snapshot` since v0.4), not which requests ran |
 
 ## Versioning
 

@@ -29,7 +29,7 @@ const KINDS: Record<
 > = {
   trace_meta: {
     required: ['engine', 'engine_version', 'model', 'wall_time_unix', 'monotonic_time'],
-    defaults: { schema_version: '0.3', extra: {} },
+    defaults: { schema_version: '0.4', extra: {} },
   },
   engine_snapshot: {
     required: ['ts', 'num_running_reqs', 'num_waiting_reqs', 'kv_cache_usage'],
@@ -47,6 +47,14 @@ const KINDS: Record<
       itl_mean_s: null,
       itl_p50_s: null,
       itl_max_s: null,
+      num_deferred_waiting_reqs: null,
+      iterations: null,
+      num_prefill_reqs: null,
+      num_prefill_tokens: null,
+      num_decode_reqs: null,
+      num_decode_tokens: null,
+      iteration_time_s: null,
+      iteration_time_source: null,
     },
   },
   request_finished: {
@@ -61,7 +69,7 @@ const KINDS: Record<
       'num_prompt_tokens',
       'num_generation_tokens',
     ],
-    defaults: { num_cached_tokens: 0 },
+    defaults: { num_cached_tokens: 0, num_preemptions: null },
   },
   kv_block_stored: {
     required: [

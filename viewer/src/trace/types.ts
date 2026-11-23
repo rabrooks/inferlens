@@ -1,6 +1,6 @@
 /**
  * Trace event types — the TypeScript mirror of `inferlens/schema/events.py`
- * (schema v0.3). Field lists are normative there; keep the two in sync in
+ * (schema v0.4). Field lists are normative there; keep the two in sync in
  * the same PR as any schema change.
  *
  * Every loaded event additionally carries `t`: its *placement* time on the
@@ -51,6 +51,16 @@ export interface EngineSnapshot extends Placed {
   itl_mean_s: number | null
   itl_p50_s: number | null
   itl_max_s: number | null
+  // v0.4: null = not recorded (never zero). Check iteration_time_source
+  // before using iteration_time_s — wall-clock and GPU time differ.
+  num_deferred_waiting_reqs: number | null
+  iterations: number | null
+  num_prefill_reqs: number | null
+  num_prefill_tokens: number | null
+  num_decode_reqs: number | null
+  num_decode_tokens: number | null
+  iteration_time_s: number | null
+  iteration_time_source: 'engine_step_wall' | 'gpu' | (string & {}) | null
 }
 
 export interface RequestFinished extends Placed {
@@ -64,6 +74,8 @@ export interface RequestFinished extends Placed {
   num_prompt_tokens: number
   num_generation_tokens: number
   num_cached_tokens: number
+  /** v0.4; null = not recorded. */
+  num_preemptions: number | null
 }
 
 export interface KVBlockStored extends Placed {

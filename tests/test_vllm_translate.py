@@ -138,3 +138,103 @@ def test_request_finished_events_handles_multiple_and_plain_string_reason():
     events = translate.request_finished_events(stats, ts=2.0)
     assert [e.request_id for e in events] == ["req-1", "req-2"]
     assert [e.finish_reason for e in events] == ["stop", "length"]
+
+
+def _iteration_record(**overrides):
+    defaults = dict(
+        iteration_index=0,
+        num_ctx_requests=1,
+        num_ctx_tokens=512,
+        num_generation_requests=3,
+        num_generation_tokens=3,
+        elapsed_ms=12.0,
+        is_dummy=False,
+    )
+    return SimpleNamespace(**{**defaults, **overrides})
+
+
+def test_engine_snapshot_iteration_fields_absent_by_default():
+    snapshot = translate.engine_snapshot(_scheduler_stats(), _iteration_stats(), ts=1.0)
+    assert snapshot.iterations is None
+    assert snapshot.num_prefill_tokens is None
+    assert snapshot.iteration_time_s is None
+    assert snapshot.iteration_time_source is None
+    assert snapshot.num_deferred_waiting_reqs is None
+
+
+def test_engine_snapshot_iteration_details_single_record():
+    # vLLM 0.34 shape: one record, EngineCore wall-clock elapsed time.
+    stats = _scheduler_stats(
+        iteration_details=_iteration_record(), num_skipped_waiting_reqs=2
+    )
+    snapshot = translate.engine_snapshot(stats, _iteration_stats(), ts=1.0)
+    assert snapshot.iterations == 1
+    assert snapshot.num_prefill_reqs == 1
+    assert snapshot.num_prefill_tokens == 512
+    assert snapshot.num_decode_reqs == 3
+    assert snapshot.num_decode_tokens == 3
+    assert snapshot.iteration_time_s == pytest.approx(0.012)
+    assert snapshot.iteration_time_source == "engine_step_wall"
+    assert snapshot.num_deferred_waiting_reqs == 2
+
+
+def test_engine_snapshot_iteration_records_list_sums_and_skips_dummies():
+    # Post-0.34 shape: several GPU-timed records per snapshot.
+    stats = _scheduler_stats(
+        iteration_records=[
+            _iteration_record(elapsed_ms=10.0),
+            _iteration_record(num_ctx_tokens=0, num_ctx_requests=0, elapsed_ms=5.0),
+            _iteration_record(is_dummy=True, num_generation_tokens=99, elapsed_ms=1.0),
+        ]
+    )
+    snapshot = translate.engine_snapshot(stats, _iteration_stats(), ts=1.0)
+    assert snapshot.iterations == 2
+    assert snapshot.num_prefill_tokens == 512
+    assert snapshot.num_decode_tokens == 6
+    assert snapshot.iteration_time_s == pytest.approx(0.015)
+    assert snapshot.iteration_time_source == "gpu"
+
+
+def test_engine_snapshot_partial_timing_reports_no_time():
+    stats = _scheduler_stats(
+        iteration_records=[
+            _iteration_record(elapsed_ms=10.0),
+            _iteration_record(elapsed_ms=None),
+        ]
+    )
+    snapshot = translate.engine_snapshot(stats, _iteration_stats(), ts=1.0)
+    assert snapshot.iterations == 2
+    assert snapshot.iteration_time_s is None
+    assert snapshot.iteration_time_source is None
+
+
+def test_engine_snapshot_only_dummy_records_reports_nothing():
+    stats = _scheduler_stats(iteration_records=[_iteration_record(is_dummy=True)])
+    snapshot = translate.engine_snapshot(stats, _iteration_stats(), ts=1.0)
+    assert snapshot.iterations is None
+
+
+def test_engine_snapshot_prefers_scheduler_preemption_count():
+    # Post-0.34 vLLM moves num_preempted_reqs onto SchedulerStats.
+    stats = _scheduler_stats(num_preempted_reqs=5)
+    iteration = SimpleNamespace(
+        **{
+            k: v
+            for k, v in vars(_iteration_stats()).items()
+            if k != "num_preempted_reqs"
+        }
+    )
+    snapshot = translate.engine_snapshot(stats, iteration, ts=1.0)
+    assert snapshot.num_preempted_reqs == 5
+
+
+def test_request_finished_num_preemptions():
+    with_count = translate.request_finished_events(
+        _iteration_stats(finished_requests=[_finished_stat(num_preemptions=2)]),
+        ts=1.0,
+    )
+    assert with_count[0].num_preemptions == 2
+    without = translate.request_finished_events(
+        _iteration_stats(finished_requests=[_finished_stat()]), ts=1.0
+    )
+    assert without[0].num_preemptions is None

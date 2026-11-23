@@ -35,6 +35,14 @@ def engine_snapshot(
     if scheduler_stats is None:
         return None
     prefix_stats = getattr(scheduler_stats, "prefix_cache_stats", None)
+    # vLLM after 0.34 moves the preemption count from IterationStats to
+    # SchedulerStats; reading only the old location would silently record
+    # zero preemptions on newer engines.
+    num_preempted: int = getattr(
+        scheduler_stats,
+        "num_preempted_reqs",
+        getattr(iteration_stats, "num_preempted_reqs", 0),
+    )
     ttft = _latency_summary(getattr(iteration_stats, "time_to_first_tokens_iter", None))
     itl = _latency_summary(getattr(iteration_stats, "inter_token_latencies_iter", None))
     return EngineSnapshot(
@@ -44,7 +52,7 @@ def engine_snapshot(
         kv_cache_usage=scheduler_stats.kv_cache_usage,
         prefix_cache_queries=getattr(prefix_stats, "queries", 0),
         prefix_cache_hits=getattr(prefix_stats, "hits", 0),
-        num_preempted_reqs=getattr(iteration_stats, "num_preempted_reqs", 0),
+        num_preempted_reqs=num_preempted,
         num_generation_tokens=getattr(iteration_stats, "num_generation_tokens", 0),
         num_prompt_tokens=getattr(iteration_stats, "num_prompt_tokens", 0),
         ttft_count=ttft[0],
@@ -55,7 +63,47 @@ def engine_snapshot(
         itl_mean_s=itl[1],
         itl_p50_s=itl[2],
         itl_max_s=itl[3],
+        num_deferred_waiting_reqs=getattr(
+            scheduler_stats, "num_skipped_waiting_reqs", None
+        ),
+        **_iteration_fields(scheduler_stats),
     )
+
+
+def _iteration_fields(scheduler_stats: Any) -> dict[str, Any]:
+    """Aggregate the scheduler's per-iteration details for this snapshot.
+
+    vLLM 0.34 attaches at most one ``iteration_details`` record whose
+    ``elapsed_ms`` is EngineCore wall time around the step; later releases
+    attach a list of ``iteration_records`` timed on the GPU (``None`` where
+    the worker does not time). Both exist only with
+    ``--enable-logging-iteration-details``. An empty result leaves every
+    field ``None`` (not recorded).
+    """
+    records = getattr(scheduler_stats, "iteration_records", None)
+    source = "gpu"
+    if records is None:
+        details = getattr(scheduler_stats, "iteration_details", None)
+        records = [] if details is None else [details]
+        source = "engine_step_wall"
+    # Data-parallel dummy iterations run no requests; counting them would
+    # dilute per-iteration rates.
+    records = [r for r in records if not getattr(r, "is_dummy", False)]
+    if not records:
+        return {}
+    times_ms = [r.elapsed_ms for r in records if r.elapsed_ms is not None]
+    # A partially timed sum would understate iteration time, so report time
+    # only when every covered iteration was timed.
+    timed = len(times_ms) == len(records)
+    return {
+        "iterations": len(records),
+        "num_prefill_reqs": sum(r.num_ctx_requests for r in records),
+        "num_prefill_tokens": sum(r.num_ctx_tokens for r in records),
+        "num_decode_reqs": sum(r.num_generation_requests for r in records),
+        "num_decode_tokens": sum(r.num_generation_tokens for r in records),
+        "iteration_time_s": sum(times_ms) / 1000.0 if timed else None,
+        "iteration_time_source": source if timed else None,
+    }
 
 
 def _latency_summary(
@@ -103,4 +151,6 @@ def _request_finished(stat: Any, ts: float) -> RequestFinished:
         num_prompt_tokens=stat.num_prompt_tokens,
         num_generation_tokens=stat.num_generation_tokens,
         num_cached_tokens=stat.num_cached_tokens,
+        # Per-request preemption count is new in vLLM 0.34.
+        num_preemptions=getattr(stat, "num_preemptions", None),
     )

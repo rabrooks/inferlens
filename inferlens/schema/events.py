@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, ClassVar
 
-SCHEMA_VERSION = "0.3"
+SCHEMA_VERSION = "0.4"
 
 
 @dataclass(slots=True)
@@ -39,6 +39,12 @@ class EngineSnapshot:
     unkeyed at the source (no request ID attached — see
     ``docs/upstream-gaps.md`` §1), so summaries are all that can be
     recorded faithfully. ``None`` means the iteration had no samples.
+
+    The v0.4 iteration fields aggregate the engine iterations this snapshot
+    covers (``iterations`` of them): scheduled prefill/decode requests and
+    tokens, and total iteration time. ``iteration_time_source`` says what
+    that time measures (``"engine_step_wall"`` or ``"gpu"``) — the two are
+    not interchangeable, so consumers must check it before using the time.
     """
 
     KIND: ClassVar[str] = "engine_snapshot"
@@ -60,6 +66,16 @@ class EngineSnapshot:
     itl_mean_s: float | None = None
     itl_p50_s: float | None = None
     itl_max_s: float | None = None
+    # v0.4 fields: None means "not recorded" (older engine, or the engine
+    # did not report it), which must stay distinguishable from a real 0.
+    num_deferred_waiting_reqs: int | None = None
+    iterations: int | None = None
+    num_prefill_reqs: int | None = None
+    num_prefill_tokens: int | None = None
+    num_decode_reqs: int | None = None
+    num_decode_tokens: int | None = None
+    iteration_time_s: float | None = None
+    iteration_time_source: str | None = None
 
 
 @dataclass(slots=True)
@@ -78,6 +94,7 @@ class RequestFinished:
     num_prompt_tokens: int
     num_generation_tokens: int
     num_cached_tokens: int = 0
+    num_preemptions: int | None = None
 
 
 @dataclass(slots=True)

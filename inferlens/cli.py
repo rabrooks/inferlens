@@ -71,6 +71,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
         command,
         kv_events=not args.no_kv_events,
         keep_parts=args.keep_parts,
+        iteration_details=args.iteration_details,
     )
 
 
@@ -105,6 +106,14 @@ def main(argv: list[str] | None = None) -> int:
         "--no-kv-events",
         action="store_true",
         help="do not enable/subscribe to the engine's KV-cache event stream",
+    )
+    p_record.add_argument(
+        "--iteration-details",
+        action="store_true",
+        help=(
+            "also record per-iteration prefill/decode counts and iteration "
+            "time (vLLM >= 0.34; makes vLLM log one line per iteration)"
+        ),
     )
     p_record.add_argument(
         "--keep-parts",

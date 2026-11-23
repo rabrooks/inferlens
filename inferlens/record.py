@@ -103,6 +103,23 @@ def plan_kv_events(command: list[str]) -> tuple[list[str], KVEventsPlan | None]:
     )
 
 
+ITERATION_DETAILS_FLAG = "--enable-logging-iteration-details"
+
+
+def plan_iteration_details(command: list[str]) -> list[str]:
+    """Enable vLLM's per-iteration scheduler details on a ``vllm serve`` command.
+
+    Opt-in rather than default: with this flag vLLM's own console logger
+    also prints one INFO line per engine iteration, on the frontend event
+    loop, which changes the user's log output and has unmeasured overhead.
+    Commands that already carry the flag, or that aren't ``vllm serve``,
+    are returned unchanged.
+    """
+    if not _is_vllm_serve(command) or ITERATION_DETAILS_FLAG in command:
+        return command
+    return [*command, ITERATION_DETAILS_FLAG]
+
+
 def _existing_kv_config(command: list[str]) -> dict[str, Any] | None:
     for i, arg in enumerate(command):
         if arg == "--kv-events-config" and i + 1 < len(command):
@@ -184,6 +201,7 @@ def run_record(
     command: list[str],
     kv_events: bool = True,
     keep_parts: bool = False,
+    iteration_details: bool = False,
 ) -> int:
     """Run ``command`` with collectors attached; merge parts into ``output``.
 
@@ -199,6 +217,8 @@ def run_record(
     stats_path = parts_dir / "stats.ilens"
     kv_path = parts_dir / "kv.ilens"
 
+    if iteration_details:
+        command = plan_iteration_details(command)
     subscription = None
     if kv_events:
         command, plan = plan_kv_events(command)
