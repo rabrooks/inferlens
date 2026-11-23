@@ -318,7 +318,16 @@ class KVEventSubscriber:
         # is filled: vLLM replays *every* buffered batch >= the requested
         # seq, and frames left unread here would poison the next replay.
         while poller.poll(timeout=self._replay_timeout_ms):
-            _empty, seq_bytes, payload = replay.recv_multipart()
+            frames = replay.recv_multipart()
+            # Read from the end: vLLM >= 0.26 (#45177) inserts a topic frame
+            # after the empty delimiter, earlier releases don't. seq and
+            # payload are always the last two frames in both layouts.
+            if len(frames) < 3:
+                _logger.warning(
+                    "dropping malformed KV replay message (%d frames)", len(frames)
+                )
+                continue
+            seq_bytes, payload = frames[-2], frames[-1]
             if not payload:
                 return last_seq  # end-of-replay marker
             replay_seq = int.from_bytes(seq_bytes, "big", signed=True)

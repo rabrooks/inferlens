@@ -199,13 +199,20 @@ def test_subscriber_receives_live_events(zmq_context):
     assert event.block_hashes == [123]
 
 
-def _replay_server(router, buffered, stop):
+# vLLM >= 0.26 (#45177) prefixes each replay reply with the topic frame;
+# earlier releases sent only (seq, payload). The subscriber must accept both.
+REPLAY_FRAMINGS = ["legacy", "topic"]
+
+
+def _replay_server(router, buffered, stop, framing="topic"):
     """Stand-in for vLLM's ``ZmqEventPublisher._service_replay``.
 
     On request, sends one multipart reply per buffered batch >= start_seq,
     then an end-of-replay marker (empty final frame). ``buffered`` is read
-    live on each request, so tests may grow it as they publish.
+    live on each request, so tests may grow it as they publish. ``framing``
+    selects the pre-0.26 ("legacy") or current ("topic") reply layout.
     """
+    prefix = (b"",) if framing == "topic" else ()
     while not stop.is_set():
         if router.poll(50):
             frame = router.recv_multipart()
@@ -216,13 +223,14 @@ def _replay_server(router, buffered, stop):
             for seq, payload in sorted(buffered.items()):
                 if seq >= start_seq:
                     router.send_multipart(
-                        (client_id, b"", seq.to_bytes(8, "big"), payload)
+                        (client_id, b"", *prefix, seq.to_bytes(8, "big"), payload)
                     )
             end_seq = (-1).to_bytes(8, "big", signed=True)
-            router.send_multipart((client_id, b"", end_seq, b""))
+            router.send_multipart((client_id, b"", *prefix, end_seq, b""))
 
 
-def test_subscriber_recovers_gap_via_replay(zmq_context):
+@pytest.mark.parametrize("framing", REPLAY_FRAMINGS)
+def test_subscriber_recovers_gap_via_replay(zmq_context, framing):
     import zmq
 
     pub = zmq_context.socket(zmq.PUB)
@@ -250,7 +258,9 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
 
     stop_replay = threading.Event()
     replay_thread = threading.Thread(
-        target=_replay_server, args=(router, buffered, stop_replay), daemon=True
+        target=_replay_server,
+        args=(router, buffered, stop_replay, framing),
+        daemon=True,
     )
     replay_thread.start()
 
@@ -290,7 +300,8 @@ def test_subscriber_recovers_gap_via_replay(zmq_context):
     ]
 
 
-def test_subscriber_recovers_repeated_gaps(zmq_context):
+@pytest.mark.parametrize("framing", REPLAY_FRAMINGS)
+def test_subscriber_recovers_repeated_gaps(zmq_context, framing):
     """Regression: a first replay must not poison the next one.
 
     vLLM replays *every* buffered batch plus an end marker; a replay that
@@ -315,7 +326,9 @@ def test_subscriber_recovers_repeated_gaps(zmq_context):
 
     stop_replay = threading.Event()
     replay_thread = threading.Thread(
-        target=_replay_server, args=(router, buffered, stop_replay), daemon=True
+        target=_replay_server,
+        args=(router, buffered, stop_replay, framing),
+        daemon=True,
     )
     replay_thread.start()
 
