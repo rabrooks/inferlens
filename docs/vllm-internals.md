@@ -4,6 +4,9 @@
 > Deep-read done against vLLM `main` @ `63fcce4de` (2026-07-01); all
 > `file:line` citations below are pinned to that commit. These internals
 > move fast — re-verify line numbers before filing anything upstream.
+> Changes through `v0.34.0` (2026-11-16) that affect the collector are
+> summarized in "Drift since the pin" at the end; line citations in the
+> body still refer to `63fcce4de`.
 
 ## Reading list
 
@@ -430,3 +433,39 @@ out-of-band only.
 - Token-budget saturation per step not exposed.
 - KV-event stream: no schema version, env-dependent hash encoding, no
   per-event timestamps, bounded non-durable replay.
+
+## Drift since the pin (re-checked against `v0.34.0`, 2026-11-23)
+
+What changed between `63fcce4de` and `v0.34.0` on the surfaces the
+collector touches:
+
+- **KV replay framing (breaking, since v0.26.0).** vLLM #45177 inserts the
+  topic frame into every replay reply: a ROUTER reply is now
+  `(client_id, b"", topic, seq, payload)` and the end marker
+  `(client_id, b"", b"", END_SEQ, b"")`, matching the live PUB layout. A
+  subscriber that unpacks exactly three frames (as ours did) breaks on the
+  first gap. Ours now reads `seq`/`payload` as the last two frames, which
+  accepts both layouts. #63224 (v0.33.0) also raised the replay socket's
+  send HWM to `2 * (buffer_steps + 1)` so a full replay plus marker is no
+  longer truncated.
+- **The reference subscriber still uses `zmq.REQ`**
+  (`examples/features/kv_events/kv_events_subscriber.py` at `v0.34.0`), so
+  the one-`recv()`-per-`send()` loss described in §6 is still present.
+- **KV event structs gained optional fields** (`locality`, `ownership`,
+  `session_id`, `lookahead_token_ids` on `BlockStored`; `locality`,
+  `ownership` on `BlockRemoved`; new media `CPU`/`STORAGE`). Events are
+  tagged maps, not arrays, so unknown keys are ignored on decode; no
+  change needed. Publisher bind/connect rule is unchanged (wildcard / `::`
+  / ipc / inproc bind), plus `tcp://*:0` now binds an OS-chosen port.
+- **Stat-logger interface unchanged.** `StatLoggerBase` signature and the
+  `issubclass` check at plugin load are the same.
+- **`SchedulerStats.num_waiting_reqs`** now excludes deferred requests
+  (`num_skipped_waiting_reqs` carries those); same split as before under
+  new names in the scheduler. **New:** `iteration_details`
+  (`SchedulerIterationDetails`: per-iteration prefill/decode request and
+  token counts, elapsed time; populated only with
+  `--enable-logging-iteration-details`) and `num_kv_fetch_reqs_by_stage`.
+- **`FinishedRequestStats.num_preemptions`** (new): per-request preemption
+  count — partially closes upstream-gaps §2 (count, not timing).
+- `IterationStats.num_prompt_tokens` is now a property over
+  `prompt_token_stats`; reading it is unchanged.
