@@ -184,7 +184,7 @@ class KVEventSubscriber:
         self._engine_version = engine_version
         self._model = model
         self._decoder = msgspec.msgpack.Decoder(type=KVEventBatch)
-        self._ctx = zmq.Context.instance()
+        self._ctx: zmq.Context[zmq.Socket[bytes]] = zmq.Context.instance()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
