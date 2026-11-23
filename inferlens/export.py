@@ -24,10 +24,10 @@ import gzip
 import json
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from inferlens.placement import Clock, split_meta
 from inferlens.schema import (
     CollectorGap,
     EngineSnapshot,
@@ -52,34 +52,6 @@ DEFAULT_KV_BIN_S = 1.0
 LANE_TID_BASE = 1000
 
 
-@dataclass(slots=True)
-class _Clock:
-    """Maps a trace's events to wall-clock placement times (unix seconds).
-
-    Mirrors the TRACE_SPEC placement rules (and the viewer loader): events
-    are rebased through the first ``trace_meta`` anchor, except ``kv_*``,
-    which are placed by their own ``wall_time_unix`` so replayed events
-    land when they happened rather than when they were recovered.
-    """
-
-    offset_s: float = 0.0
-
-    @classmethod
-    def from_meta(cls, meta: TraceMeta | None) -> _Clock:
-        if meta is None:
-            # No anchor: keep raw monotonic ts. Relative placement still
-            # holds because export only ever shows time since trace start.
-            return cls()
-        return cls(offset_s=meta.wall_time_unix - meta.monotonic_time)
-
-    def place(self, event: TraceEvent) -> float:
-        if isinstance(event, KVBlockStored | KVBlockRemoved | KVCacheCleared):
-            return event.wall_time_unix
-        if isinstance(event, TraceMeta):
-            return event.wall_time_unix
-        return event.ts + self.offset_s
-
-
 def to_perfetto(
     events: Iterable[TraceEvent], kv_bin_s: float = DEFAULT_KV_BIN_S
 ) -> dict[str, Any]:
@@ -101,17 +73,8 @@ def to_perfetto(
     if not kv_bin_s > 0:
         raise ValueError(f"kv_bin_s must be positive, got {kv_bin_s!r}")
 
-    meta: TraceMeta | None = None
-    body: list[TraceEvent] = []
-    for event in events:
-        if isinstance(event, TraceMeta):
-            # The first meta is the anchor; later ones are ignored per spec.
-            if meta is None:
-                meta = event
-        else:
-            body.append(event)
-
-    clock = _Clock.from_meta(meta)
+    meta, body = split_meta(events)
+    clock = Clock.from_meta(meta)
     placed = [(clock.place(e), e) for e in body]
     requests = [
         (t, e) for t, e in placed if isinstance(e, RequestFinished) and e.e2e_latency_s

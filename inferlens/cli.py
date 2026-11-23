@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import Counter
 
@@ -95,6 +96,29 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_explain(args: argparse.Namespace) -> int:
+    from inferlens.analysis import analyze
+    from inferlens.explain import render_text, to_json
+
+    try:
+        analysis = analyze(read_trace(args.trace), bin_s=args.bin_s)
+    except OSError as exc:
+        print(f"error: cannot read {args.trace}: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(to_json(analysis, worst=args.worst), indent=2))
+    else:
+        sys.stdout.write(
+            render_text(analysis, worst=args.worst, request_id=args.request)
+        )
+    if args.request is not None and analysis.request(args.request) is None:
+        return 1
+    return 0
+
+
 def _cmd_not_implemented(command: str) -> int:
     print(f"inferlens {command} is not implemented yet", file=sys.stderr)
     return 2
@@ -179,6 +203,33 @@ def main(argv: list[str] | None = None) -> int:
         help="bin width in seconds for KV stored/evicted rates (default: 1.0)",
     )
 
+    p_explain = sub.add_parser(
+        "explain",
+        help="report incidents and where request latency went",
+        description=(
+            "Find incident windows (KV saturation, preemption storms, queue "
+            "backlog), compare affected requests with calm ones, and break "
+            "down where the slowest requests' latency went."
+        ),
+    )
+    p_explain.add_argument("trace", help="trace file to analyze")
+    p_explain.add_argument(
+        "--worst",
+        type=int,
+        default=10,
+        help="how many of the slowest requests to list (default: 10)",
+    )
+    p_explain.add_argument("--request", help="show one request's full breakdown")
+    p_explain.add_argument(
+        "--json", action="store_true", help="print the report as JSON"
+    )
+    p_explain.add_argument(
+        "--bin-s",
+        type=float,
+        default=1.0,
+        help="time resolution of incident detection, seconds (default: 1.0)",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "info":
         return _cmd_info(args)
@@ -186,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_record(args)
     if args.command == "export":
         return _cmd_export(args)
+    if args.command == "explain":
+        return _cmd_explain(args)
     return _cmd_not_implemented(args.command)
 
 
