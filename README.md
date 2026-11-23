@@ -41,6 +41,7 @@ SGLang ──(collector, planned)───────────►       one 
 pip install inferlens
 inferlens record -o run.ilens.gz -- vllm serve Qwen/Qwen2.5-1.5B-Instruct   # in development
 inferlens info run.ilens.gz
+inferlens export run.ilens.gz -o run.json.gz                                 # open in ui.perfetto.dev
 inferlens view run.ilens.gz                                                  # in development
 ```
 

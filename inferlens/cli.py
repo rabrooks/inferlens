@@ -75,6 +75,26 @@ def _cmd_record(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    from inferlens.export import export_perfetto
+
+    try:
+        count = export_perfetto(
+            read_trace(args.trace), args.output, kv_bin_s=args.kv_bin_s
+        )
+    except OSError as exc:
+        print(f"error: cannot export {args.trace}: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"wrote {args.output}: {count} trace events "
+        "(open in https://ui.perfetto.dev or chrome://tracing)"
+    )
+    return 0
+
+
 def _cmd_not_implemented(command: str) -> int:
     print(f"inferlens {command} is not implemented yet", file=sys.stderr)
     return 2
@@ -135,11 +155,37 @@ def main(argv: list[str] | None = None) -> int:
     p_info = sub.add_parser("info", help="summarize a trace file")
     p_info.add_argument("trace", help="trace file to summarize")
 
+    p_export = sub.add_parser(
+        "export",
+        help="convert a trace for another tool (Perfetto / chrome://tracing)",
+    )
+    p_export.add_argument("trace", help="trace file to convert")
+    p_export.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        help="output file (.json, or .json.gz to compress)",
+    )
+    p_export.add_argument(
+        "--format",
+        choices=["perfetto"],
+        default="perfetto",
+        help="output format (default: perfetto; Chrome trace-event JSON)",
+    )
+    p_export.add_argument(
+        "--kv-bin-s",
+        type=float,
+        default=1.0,
+        help="bin width in seconds for KV stored/evicted rates (default: 1.0)",
+    )
+
     args = parser.parse_args(argv)
     if args.command == "info":
         return _cmd_info(args)
     if args.command == "record":
         return _cmd_record(args)
+    if args.command == "export":
+        return _cmd_export(args)
     return _cmd_not_implemented(args.command)
 
 
