@@ -29,3 +29,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --extra vllm
       - run: uv run pytest -v
+
+  viewer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: viewer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # Real-trace cross-checks self-skip: the GPU fixture isn't in the repo.
+      - run: npx vitest run
+      - run: npx oxlint src
