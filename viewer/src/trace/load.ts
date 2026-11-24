@@ -256,7 +256,7 @@ export async function loadTrace(blob: Blob): Promise<Trace> {
       }
       continue
     }
-    byKind[kind].push(event)
+    byKind[kind].push({ ...event, order: eventCount })
     eventCount++
   }
 
@@ -276,7 +276,9 @@ export async function loadTrace(blob: Blob): Promise<Trace> {
     ;(list as { t: number }[]).sort((a, b) => a.t - b.t)
   }
   for (const list of [kvStored, kvRemoved, kvCleared]) {
-    ;(list as { t: number; seq: number }[]).sort((a, b) => a.t - b.t || a.seq - b.seq)
+    ;(list as { t: number; seq: number; order: number }[]).sort(
+      (a, b) => a.t - b.t || a.seq - b.seq || a.order - b.order,
+    )
   }
 
   let start = Infinity

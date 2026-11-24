@@ -39,7 +39,7 @@
   --il-waiting: light-dark(#eda100, #c98500); /* waiting queue / dead time */
   --il-kv: light-dark(#1baf7a, #199e70); /* KV-cache usage AND evictions */
   --il-preempt: light-dark(#e34948, #e66767); /* preemption events */
-  --il-cachehit: light-dark(#008300, #008300); /* prefix-cache hit rate */
+  --il-cachehit: light-dark(#6250d6, #9085e9); /* prefix-cache hit rate */
 
   /* Request phases — ordinal blue ramp (recessive → salient per surface) */
   --il-phase-queued: light-dark(#86b6ef, #184f95);

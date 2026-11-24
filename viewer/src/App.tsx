@@ -3,6 +3,7 @@ import { binTrace, findIncidents } from './analysis/incidents'
 import { analyzeRequests, type RequestAttr } from './analysis/requests'
 import { RequestGantt } from './gantt/RequestGantt'
 import { RequestPanel } from './gantt/RequestPanel'
+import { KvPanel } from './kv/KvPanel'
 import { loadTrace } from './trace/load'
 import type { Trace } from './trace/types'
 import { EngineTimeline } from './timeline/EngineTimeline'
@@ -235,7 +236,7 @@ function TraceView({ trace }: { trace: Trace }) {
             selected={selected}
             onSelect={setSelected}
           />
-          <TrackPlaceholder title="KV / prefix cache" />
+          <KvPanel trace={trace} incidents={incidents} tv={tv} selected={selected} />
         </div>
         <div className="xl:sticky xl:top-0 xl:max-h-[calc(100vh-3rem)] xl:self-start xl:overflow-y-auto">
           <RequestPanel
@@ -248,18 +249,5 @@ function TraceView({ trace }: { trace: Trace }) {
         </div>
       </div>
     </>
-  )
-}
-
-function TrackPlaceholder({ title }: { title: string }) {
-  return (
-    <section className="rounded border border-edge bg-surface">
-      <h2 className="border-b border-grid px-2 py-1 text-xs font-medium text-ink-secondary">
-        {title}
-      </h2>
-      <div className="flex h-40 items-center justify-center text-xs text-ink-muted">
-        coming soon
-      </div>
-    </section>
   )
 }
