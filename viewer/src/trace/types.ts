@@ -31,6 +31,12 @@ interface Placed {
   t: number
   /** Monotonic-clock reading from the source process (seconds). */
   ts: number
+  /**
+   * Position in the file (viewer-only, not part of the schema). Several KV
+   * events of one publisher batch share `t` and `seq`; file order is the
+   * only record of the order the engine emitted them in.
+   */
+  order: number
 }
 
 export interface EngineSnapshot extends Placed {

@@ -12,6 +12,7 @@ function snap(t: number, over: Partial<EngineSnapshot> = {}): EngineSnapshot {
     kind: 'engine_snapshot',
     t,
     ts: t,
+    order: 0,
     num_running_reqs: 4,
     num_waiting_reqs: 0,
     kv_cache_usage: 0.3,

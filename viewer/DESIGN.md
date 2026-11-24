@@ -9,7 +9,7 @@ color or a chart.
 
 - **Color follows the entity, never the chart.** A hue means the same thing
   everywhere it appears: blue = active work, yellow = waiting/dead time,
-  aqua = KV-cache activity, red = preemption, green = prefix-cache hits.
+  aqua = KV-cache activity, red = preemption, violet = prefix-cache hits.
   A new chart reuses the entity's color; a new color means a new entity.
 - **Status colors are reserved.** `collector_gap` regions wear the warning
   color; KV saturation (usage = 1.0) wears critical. Status colors are never
@@ -32,7 +32,7 @@ color or a chart.
 | Waiting queue / dead time | `--il-waiting` | `#eda100` | `#c98500` |
 | KV-cache usage **and evictions** | `--il-kv` | `#1baf7a` | `#199e70` |
 | Preemption events | `--il-preempt` | `#e34948` | `#e66767` |
-| Prefix-cache hit rate | `--il-cachehit` | `#008300` | `#008300` |
+| Prefix-cache hit rate | `--il-cachehit` | `#6250d6` | `#9085e9` |
 | Phase: queued | `--il-phase-queued` | `#86b6ef` | `#184f95` |
 | Phase: prefill | `--il-phase-prefill` | `#3987e5` | `#3987e5` |
 | Phase: decode | `--il-phase-decode` | `#184f95` | `#86b6ef` |
@@ -138,3 +138,30 @@ zooming or panning either track moves both, and the crosshair spans both.
   white by the fill's luminance *per theme* (the ramp flips ends).
 - **Request table** (sortable, searchable by id) is the Gantt's
   tooltip-free twin and the keyboard path to selection.
+
+## KV / prefix-cache panel
+
+Same shared view, cursor, incident wash, gap rules, and selected-request
+brackets as the other tracks. It adds what the engine timeline doesn't
+already show (KV usage and eviction volume live there):
+
+| Lane | Marks | Scale |
+| --- | --- | --- |
+| Prefix-cache lookups | violet bars: hit tokens solid from the baseline, missed tokens a lighter step (32%) above a 2px surface gap | tokens / s |
+| KV blocks stored | aqua bars | blocks / s, shared with the next lane |
+| Recomputed after eviction | aqua bars | blocks / s, same scale as stored |
+
+- **Recomputed after eviction** = a stored block whose (medium, group, hash)
+  was evicted earlier and not stored since. It is KV work done twice
+  because capacity ran out. Replay order is placement time, then batch
+  `seq`, then file order: events in one publisher batch share `t` and
+  `seq`, and replaying a batch's stores before its removals undercounts.
+- Stored and recomputed share one scale so the recomputed share reads as a
+  fraction of the bar above it.
+- A hit-*rate* line was rejected: lookups are bursty, so per-pixel ratios
+  swing between 0 and the true rate and the line fragments. The rate is in
+  the header, the tooltip (per second), and the table view.
+- The light miss step and light aqua are sub-3:1 fills: lanes are directly
+  labeled and the table view carries every value (relief obligation).
+- A trace without KV events (no subscriber) shows only the lookups lane,
+  with a note saying how to record block activity.

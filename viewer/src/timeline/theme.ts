@@ -20,6 +20,7 @@ const TOKENS = [
   'waiting',
   'kv',
   'preempt',
+  'cachehit',
   'phase-queued',
   'phase-prefill',
   'phase-decode',
